@@ -22,7 +22,7 @@
   "containerDefinitions": [
     {
       "name": "zharp-collector",
-      "image": "ghcr.io/byteinbox/zharp-logs-collector:latest",
+      "image": "ghcr.io/zharp-io/agent:latest",
       "essential": true,
       "portMappings": [
         { "containerPort": 4317, "hostPort": 4317, "protocol": "tcp" },

@@ -11,7 +11,7 @@ import (
 	"go.opentelemetry.io/collector/processor"
 	"go.opentelemetry.io/collector/receiver"
 	otelconftelemetry "go.opentelemetry.io/collector/service/telemetry/otelconftelemetry"
-	zharpexporter "github.com/Byteinbox/zharp-logs-collector/zharpexporter"
+	zharpexporter "github.com/zharp-io/agent/zharpexporter"
 	zpagesextension "go.opentelemetry.io/collector/extension/zpagesextension"
 	healthcheckextension "github.com/open-telemetry/opentelemetry-collector-contrib/extension/healthcheckextension"
 	batchprocessor "go.opentelemetry.io/collector/processor/batchprocessor"
@@ -90,7 +90,7 @@ func components() (otelcol.Factories, error) {
 		return otelcol.Factories{}, err
 	}
 	factories.ExporterModules = makeModulesMap(factories.Exporters, map[component.Type]string{
-		zharpexporter.NewFactory().Type(): "github.com/Byteinbox/zharp-logs-collector/zharpexporter v0.0.1",
+		zharpexporter.NewFactory().Type(): "github.com/zharp-io/agent/zharpexporter v0.0.1",
 	})
 
 	factories.Processors, err = otelcol.MakeFactoryMap[processor.Factory](

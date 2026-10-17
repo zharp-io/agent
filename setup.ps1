@@ -2,7 +2,7 @@
 # Downloads the binary and prints next steps.
 #
 # Run as Administrator:
-#   irm https://raw.githubusercontent.com/Byteinbox/zharp-logs-collector/main/setup.ps1 | iex
+#   irm https://raw.githubusercontent.com/zharp-io/agent/main/setup.ps1 | iex
 #
 # Or download and run locally:
 #   Set-ExecutionPolicy Bypass -Scope Process -Force
@@ -11,7 +11,7 @@
 #Requires -RunAsAdministrator
 $ErrorActionPreference = "Stop"
 
-$REPO        = "Byteinbox/zharp-logs-collector"
+$REPO        = "zharp-io/agent"
 $INSTALL_DIR = "C:\Program Files\zharp-collector"
 $EXE_PATH    = "$INSTALL_DIR\zharp-collector.exe"
 

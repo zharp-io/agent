@@ -30,7 +30,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: collector
-          image: ghcr.io/byteinbox/zharp-logs-collector:latest
+          image: ghcr.io/zharp-io/agent:latest
           imagePullPolicy: Always
           args:
             - --config=/etc/zharp-collector/config.yaml

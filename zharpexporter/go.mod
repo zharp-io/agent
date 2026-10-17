@@ -1,4 +1,4 @@
-module github.com/Byteinbox/zharp-logs-collector/zharpexporter
+module github.com/zharp-io/agent/zharpexporter
 
 go 1.25.0
 

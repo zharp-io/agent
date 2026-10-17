@@ -5,7 +5,7 @@ dist:
   otelcol_version: "0.154.0"
 
 exporters:
-  - gomod: github.com/Byteinbox/zharp-logs-collector/zharpexporter v0.0.1
+  - gomod: github.com/zharp-io/agent/zharpexporter v0.0.1
     path: ./zharpexporter
 
 receivers:

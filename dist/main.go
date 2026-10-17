@@ -6,7 +6,7 @@ package main
 import (
 	"os"
 
-	zharpexporter "github.com/Byteinbox/zharp-logs-collector/zharpexporter"
+	zharpexporter "github.com/zharp-io/agent/zharpexporter"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/confmap"
 	envprovider "go.opentelemetry.io/collector/confmap/provider/envprovider"

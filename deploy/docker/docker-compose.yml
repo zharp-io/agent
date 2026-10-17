@@ -13,7 +13,7 @@
 
 services:
   zharp-collector:
-    image: ghcr.io/byteinbox/zharp-logs-collector:latest
+    image: ghcr.io/zharp-io/agent:latest
     container_name: zharp-collector
     restart: unless-stopped
     environment:

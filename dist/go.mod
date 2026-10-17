@@ -5,7 +5,7 @@ module go.opentelemetry.io/collector/cmd/builder
 go 1.25.0
 
 require (
-	github.com/Byteinbox/zharp-logs-collector/zharpexporter v0.0.1
+	github.com/zharp-io/agent/zharpexporter v0.0.1
 	github.com/open-telemetry/opentelemetry-collector-contrib/extension/healthcheckextension v0.154.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/processor/resourcedetectionprocessor v0.154.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/receiver/dockerstatsreceiver v0.154.0
@@ -315,4 +315,4 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-replace github.com/Byteinbox/zharp-logs-collector/zharpexporter v0.0.1 => ../zharpexporter
+replace github.com/zharp-io/agent/zharpexporter v0.0.1 => ../zharpexporter

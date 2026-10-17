@@ -1,9 +1,9 @@
 ## Zharp Collector — starter config template
 ## Run the guided installer to auto-generate this for your server:
-##   curl -sSL https://raw.githubusercontent.com/Byteinbox/zharp-logs-collector/main/install.sh | sudo bash
+##   curl -sSL https://raw.githubusercontent.com/zharp-io/agent/main/install.sh | sudo bash
 ##
 ## Or edit manually. Full reference:
-##   https://github.com/Byteinbox/zharp-logs-collector#configuration
+##   https://github.com/zharp-io/agent#configuration
 
 extensions:
   health_check:

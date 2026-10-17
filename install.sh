@@ -3,7 +3,7 @@
 # Downloads the binary and prints next steps.
 set -euo pipefail
 
-REPO="Byteinbox/zharp-logs-collector"
+REPO="zharp-io/agent"
 INSTALL_DIR="/usr/local/bin"
 
 # ── platform ──────────────────────────────────────────────────────────────────

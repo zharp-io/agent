@@ -24,7 +24,7 @@ The **Zharp Collector** is an OpenTelemetry-based agent that ships logs and metr
 ### Linux / macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Byteinbox/zharp-logs-collector/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/zharp-io/agent/main/install.sh | sudo bash
 ```
 
 The installer:
@@ -57,7 +57,7 @@ sudo tail -f /var/log/zharp-collector.log
 Open PowerShell **as Administrator** and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/Byteinbox/zharp-logs-collector/main/setup.ps1 | iex
+irm https://raw.githubusercontent.com/zharp-io/agent/main/setup.ps1 | iex
 ```
 
 The script does the same as the Linux installer — detects running services, asks for your API key, generates the config, and installs the collector as a Windows Service that starts automatically on boot.
@@ -135,7 +135,7 @@ kubectl create secret generic zharp-collector-secret \
 **2. Deploy**
 
 ```bash
-kubectl apply -k https://github.com/Byteinbox/zharp-logs-collector//deploy/kubernetes
+kubectl apply -k https://github.com/zharp-io/agent//deploy/kubernetes
 ```
 
 Or from a local clone:
@@ -343,8 +343,8 @@ Use this for Docker health checks, Kubernetes readiness probes, or load balancer
 Requirements: Go 1.22+
 
 ```bash
-git clone https://github.com/Byteinbox/zharp-logs-collector.git
-cd zharp-logs-collector/dist
+git clone https://github.com/zharp-io/agent.git
+cd agent/dist
 go build -o ../zharp-collector .
 ```
 
@@ -360,5 +360,5 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 ## Support
 
 - **Docs**: [zharp.io/docs](https://zharp.io/docs)
-- **Issues**: [GitHub Issues](https://github.com/Byteinbox/zharp-logs-collector/issues)
+- **Issues**: [GitHub Issues](https://github.com/zharp-io/agent/issues)
 - **Community**: [zharp.io/discord](https://zharp.io/discord)
