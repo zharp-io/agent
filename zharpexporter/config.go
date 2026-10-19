@@ -2,6 +2,7 @@ package zharpexporter
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,21 @@ type Config struct {
 
 	// BatchSize is the maximum log records per HTTP request. Defaults to 500.
 	BatchSize int `mapstructure:"batch_size"`
+
+	// Endpoint is the Zharp API to send to. Empty means Zharp Cloud; set it for self-hosted Zharp.
+	Endpoint string `mapstructure:"endpoint"`
+
+	// InventoryFile is what `zharp-collector install` found on this host. Its contents go out
+	// with every heartbeat so the dashboard can show what is collected and what needs setup.
+	InventoryFile string `mapstructure:"inventory_file"`
+}
+
+// baseURL is the API every request goes to, without a trailing slash.
+func (c *Config) baseURL() string {
+	if e := strings.TrimRight(strings.TrimSpace(c.Endpoint), "/"); e != "" {
+		return e
+	}
+	return defaultEndpoint
 }
 
 func (c *Config) Validate() error {

@@ -17,6 +17,7 @@ func NewFactory() exporter.Factory {
 		createDefaultConfig,
 		exporter.WithLogs(createLogsExporter, component.StabilityLevelBeta),
 		exporter.WithMetrics(createMetricsExporter, component.StabilityLevelBeta),
+		exporter.WithTraces(createTracesExporter, component.StabilityLevelBeta),
 	)
 }
 
@@ -50,4 +51,16 @@ func createMetricsExporter(
 		return nil, err
 	}
 	return newMetricsExporter(c, set.Logger), nil
+}
+
+func createTracesExporter(
+	ctx context.Context,
+	set exporter.Settings,
+	cfg component.Config,
+) (exporter.Traces, error) {
+	c := cfg.(*Config)
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	return newTracesExporter(c, set.Logger), nil
 }

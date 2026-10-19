@@ -51,6 +51,7 @@ func allOptions(detected []ServiceOption) []ServiceOption {
 		manual = append(manual, ServiceOption{Label: "IIS logs", Type: "iis_log", Detail: "tail IIS W3C logs"})
 	}
 	manual = append(manual, ServiceOption{Label: "Custom log file", Type: "custom_log", Detail: "any log file path or glob"})
+	manual = append(manual, ServiceOption{Label: "Application traces", Type: "apm", Detail: "receive OpenTelemetry traces from your apps"})
 
 	result := make([]ServiceOption, 0, len(detected)+len(manual))
 	result = append(result, detected...)

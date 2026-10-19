@@ -20,6 +20,16 @@ receivers:
       network:
       load:
 
+  # Application traces (APM) — the port your instrumented apps report to.
+  # Bound to localhost: a trace carries request URLs, query text and error messages, so
+  # opening this to the network should be a deliberate choice.
+  # otlp:
+  #   protocols:
+  #     grpc:
+  #       endpoint: 127.0.0.1:4317
+  #     http:
+  #       endpoint: 127.0.0.1:4318
+
   # Tail log files — add your own paths here
   # filelog:
   #   include:
@@ -54,4 +64,10 @@ service:
     # logs:
     #   receivers: [filelog]
     #   processors: [memory_limiter, resourcedetection, batch]
+    #   exporters: [zharp]
+    # Uncomment when you add otlp above. No resourcedetection here — the application already
+    # declares its own service.name, and host detection would overwrite it.
+    # traces:
+    #   receivers: [otlp]
+    #   processors: [memory_limiter, batch]
     #   exporters: [zharp]

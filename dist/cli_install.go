@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"runtime"
@@ -16,14 +17,33 @@ type svcInstallConfig struct {
 	hasDocker  bool
 }
 
-// cliInstall runs the guided setup wizard.
+// cliInstall sets the collector up as a service.
+//
+// With an API key and --yes (or with no terminal to ask on, as under `curl | sh`) it runs
+// unattended: everything detected that needs no password is collected with its defaults, and the
+// rest is reported to the dashboard as waiting for setup. Otherwise it runs the guided wizard.
 func cliInstall() {
+	fs := flag.NewFlagSet("install", flag.ExitOnError)
+	keyFlag := fs.String("api-key", "", "workspace API key (or ZHARP_API_KEY)")
+	endpointFlag := fs.String("endpoint", "", "Zharp API URL, for self-hosted installs (or ZHARP_ENDPOINT)")
+	yes := fs.Bool("yes", false, "set up everything that needs no password, without asking")
+	fs.BoolVar(yes, "y", false, "shorthand for --yes")
+	_ = fs.Parse(os.Args[2:])
+
+	presetKey := firstNonEmpty(*keyFlag, os.Getenv("ZHARP_API_KEY"))
+	endpoint := strings.TrimRight(firstNonEmpty(*endpointFlag, os.Getenv("ZHARP_ENDPOINT")), "/")
+
 	// Require root on non-Windows.
 	if runtime.GOOS != "windows" {
 		if os.Getuid() != 0 {
 			fmt.Fprintln(os.Stderr, "  [!] This command must be run as root. Try: sudo zharp-collector install")
 			os.Exit(1)
 		}
+	}
+
+	if presetKey != "" && (*yes || !isTerminal(os.Stdin)) {
+		installUnattended(presetKey, endpoint)
+		return
 	}
 
 	// Step 1: Banner.
@@ -45,7 +65,7 @@ func cliInstall() {
 	uiSection("3 · API Key")
 	uiDimMsg("Get yours at: https://zharp.io/settings/api-keys")
 	fmt.Println()
-	apiKey := ""
+	apiKey := presetKey
 	for apiKey == "" {
 		apiKey = strings.TrimSpace(uiAsk("Paste your API key:"))
 		if apiKey == "" {
@@ -69,6 +89,8 @@ func cliInstall() {
 		"ZHARP_API_KEY": apiKey,
 	}
 	hasDocker := false
+	tracing := false
+	var configured []InventoryItem
 
 	for {
 		// Build current menu.
@@ -155,8 +177,26 @@ func cliInstall() {
 
 		fmt.Println()
 		fmt.Printf("  %sConfiguring: %s%s\n", colBold, selected.Label, colReset)
+		if selected.Type == "apm" {
+			doneTypes[selected.Type] = true
+			tracing = true
+			uiOK("Applications can send traces to 127.0.0.1:4318 (HTTP) or 127.0.0.1:4317 (gRPC).")
+			uiDimMsg("Point your OpenTelemetry SDK at that endpoint — no API key needed, the collector already has one.")
+
+			fmt.Println()
+			more := strings.TrimSpace(uiAsk("Monitor another service? [Y/n]:"))
+			if strings.EqualFold(more, "n") {
+				break
+			}
+			fmt.Println()
+			continue
+		}
+
 		receiver, block, sources, ev, isDocker := configureService(selected.Type)
 		doneTypes[selected.Type] = true
+		if receiver != "" || len(sources) > 0 {
+			configured = append(configured, inventoryFor(selected.Type))
+		}
 
 		if receiver != "" {
 			metricsReceivers = append(metricsReceivers, receiver)
@@ -180,8 +220,44 @@ func cliInstall() {
 		fmt.Println()
 	}
 
-	// Step 5: Write config.
-	uiSection("5 · Writing config")
+	// Detected but skipped stays visible in the dashboard, so it can be set up later.
+	inventory := []InventoryItem{{Type: "host", Label: "Host metrics", Status: invCollecting, Detail: "CPU, memory, disk, network and load"}}
+	if tracing {
+		inventory = append(inventory, InventoryItem{Type: "apm", Label: "Application traces", Status: invCollecting, Detail: "OpenTelemetry on 127.0.0.1:4317 (gRPC) and :4318 (HTTP)"})
+	}
+	inventory = append(inventory, configured...)
+	for _, d := range detected {
+		if !doneTypes[d.Type] {
+			inventory = append(inventory, InventoryItem{Type: d.Type, Label: d.Label, Status: invNeedsSetup, Detail: "Skipped during install"})
+		}
+	}
+
+	finishInstall(buildConfigYAML(metricsReceivers, receiverBlocks, logSources, tracing, endpoint), allEnvVars, hasDocker, inventory, true)
+}
+
+// installUnattended is the no-questions install: detect, set up what needs no password, start.
+func installUnattended(apiKey, endpoint string) {
+	fmt.Println()
+	uiInfo("Scanning this server...")
+	plan := planAutomatic(detectServices())
+	plan.envVars["ZHARP_API_KEY"] = apiKey
+
+	for _, item := range plan.inventory {
+		if item.Status == invCollecting {
+			uiOK(fmt.Sprintf("%-20s %s", item.Label, item.Detail))
+		} else {
+			uiWarn(fmt.Sprintf("%-20s %s — finish it from the Zharp dashboard", item.Label, item.Detail))
+		}
+	}
+
+	finishInstall(buildConfigYAML(plan.metricsReceivers, plan.receiverBlocks, plan.logSources, plan.tracing, endpoint), plan.envVars, plan.hasDocker, plan.inventory, false)
+}
+
+// finishInstall writes the config, secrets and inventory, then installs and starts the service.
+func finishInstall(yaml string, envVars map[string]string, hasDocker bool, inventory []InventoryItem, guided bool) {
+	if guided {
+		uiSection("5 · Writing config")
+	}
 
 	configDir := installConfigDir()
 	configFile := installConfigFile()
@@ -192,7 +268,6 @@ func cliInstall() {
 		os.Exit(1)
 	}
 
-	yaml := buildConfigYAML(metricsReceivers, receiverBlocks, logSources)
 	if err := os.WriteFile(configFile, []byte(yaml), 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "  [!] Cannot write config: %v\n", err)
 		os.Exit(1)
@@ -201,7 +276,7 @@ func cliInstall() {
 
 	// Write env file.
 	var envLines []string
-	for k, v := range allEnvVars {
+	for k, v := range envVars {
 		envLines = append(envLines, k+"="+v)
 	}
 	envContent := strings.Join(envLines, "\n") + "\n"
@@ -212,8 +287,14 @@ func cliInstall() {
 	}
 	uiOK("Secrets → " + envFile)
 
+	if err := writeInventory(inventory); err != nil {
+		uiWarn("Could not write the inventory: " + err.Error())
+	}
+
 	// Step 6: Install service.
-	uiSection("6 · Installing service")
+	if guided {
+		uiSection("6 · Installing service")
+	}
 
 	binaryPath, err := os.Executable()
 	if err != nil {
@@ -225,7 +306,7 @@ func cliInstall() {
 		binaryPath: binaryPath,
 		configFile: configFile,
 		envFile:    envFile,
-		envVars:    allEnvVars,
+		envVars:    envVars,
 		hasDocker:  hasDocker,
 	}
 
@@ -245,8 +326,17 @@ func cliInstall() {
 	fmt.Println()
 	printDoneCommands()
 	fmt.Println()
-	uiDimMsg("Data will appear in your Zharp dashboard within a minute.")
+	uiDimMsg("This host appears in your Zharp dashboard within a minute.")
 	fmt.Println()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // configureService prompts for service-specific config and returns the
@@ -381,14 +471,7 @@ func configureService(svcType string) (receiver, block string, logSources []LogS
 		pt := promptDefault("Port", "3306")
 		u := promptDefault("User", "zharp_monitor")
 		pass := uiReadPassword("Password:")
-		receiver = "mysql"
-		block = fmt.Sprintf(`
-  mysql:
-    endpoint: %s:%s
-    username: %s
-    password: "${env:MYSQL_PASSWORD}"
-    collection_interval: 30s
-`, h, pt, u)
+		receiver, block = mysqlReceivers(h, pt, u)
 		ev["MYSQL_PASSWORD"] = pass
 		uiOK("MySQL configured.")
 		fmt.Println()

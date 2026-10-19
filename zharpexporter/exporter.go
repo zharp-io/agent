@@ -77,7 +77,7 @@ func (e *zharpLogsExporter) Capabilities() consumer.Capabilities {
 
 // Start implements component.Component.
 func (e *zharpLogsExporter) Start(_ context.Context, _ component.Host) error {
-	e.logger.Info("Zharp exporter started", zap.String("endpoint", defaultEndpoint))
+	e.logger.Info("Zharp exporter started", zap.String("endpoint", e.cfg.baseURL()))
 	return nil
 }
 
@@ -171,7 +171,7 @@ func (e *zharpLogsExporter) ship(ctx context.Context, batch []logEntry) error {
 		return fmt.Errorf("zharpexporter: marshal failed: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/agent/logs/%s", defaultEndpoint, e.cfg.APIKey)
+	url := fmt.Sprintf("%s/agent/logs/%s", e.cfg.baseURL(), e.cfg.APIKey)
 	req, err := newRequest(ctx, url, bytes.NewReader(body), e.cfg.APIKey)
 	if err != nil {
 		return err

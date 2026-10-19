@@ -103,15 +103,10 @@ func runSetupWizard(cfgPath string) {
     tls:
       insecure: true`,
 		},
-		{
-			name: "MySQL / MariaDB", receiver: "mysql",
-			block: `
-  mysql:
-    endpoint: localhost:3306
-    username: zharp_monitor
-    password: "${env:MYSQL_PASSWORD}"
-    collection_interval: 30s`,
-		},
+		func() svcOption {
+			receivers, block := mysqlReceivers("localhost", "3306", "zharp_monitor")
+			return svcOption{name: "MySQL / MariaDB", receiver: receivers, block: strings.TrimRight(block, "\n")}
+		}(),
 		{
 			name: "Redis", receiver: "redis",
 			block: `

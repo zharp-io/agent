@@ -53,6 +53,15 @@ func cliAdd() {
 
 	applyAddition(configFile, envFile, receiver, block, logSources, envVars)
 
+	// Tell the dashboard on the next heartbeat. Custom log sources are kept apart by name.
+	item := inventoryFor(svcType)
+	if svcType == "custom_log" && len(logSources) > 0 {
+		item.Type = "log:" + logSources[0].Name
+		item.Label = logSources[0].Name + " logs"
+		item.Detail = strings.Join(logSources[0].Paths, ", ")
+	}
+	markInventory(item)
+
 	uiInfo("Restarting service to apply changes...")
 	if err := svcRestart(); err != nil {
 		uiWarn("Restart failed: " + err.Error())
@@ -111,14 +120,7 @@ func parseAddArgs(svcType string, args []string) (receiver, block string, logSou
 			err = fmt.Errorf("--password is required for mysql")
 			return
 		}
-		receiver = "mysql"
-		block = fmt.Sprintf(`
-  mysql:
-    endpoint: %s:%s
-    username: %s
-    password: "${env:MYSQL_PASSWORD}"
-    collection_interval: 30s
-`, *host, *port, *user)
+		receiver, block = mysqlReceivers(*host, *port, *user)
 		envVars["MYSQL_PASSWORD"] = *pass
 
 	case "redis":
@@ -439,7 +441,15 @@ func addReceiverToConfig(configFile, receiver, block string) error {
 	if !strings.Contains(content, marker) {
 		return fmt.Errorf("could not find processors section in config")
 	}
-	if !strings.Contains(content, "  "+receiver+":") {
+	// A source can need more than one receiver (MySQL adds a query for its connection limit);
+	// they come comma-separated and share one block, so the first name decides if it's there.
+	var names []string
+	for _, r := range strings.Split(receiver, ",") {
+		if r = strings.TrimSpace(r); r != "" {
+			names = append(names, r)
+		}
+	}
+	if len(names) > 0 && !strings.Contains(content, "\n  "+names[0]+":") {
 		content = strings.Replace(content, marker, "\n"+block+marker, 1)
 	}
 
@@ -451,15 +461,21 @@ func addReceiverToConfig(configFile, receiver, block string) error {
 			return m
 		}
 		existing := strings.TrimSpace(sub[2])
+		present := map[string]bool{}
 		for _, r := range strings.Split(existing, ",") {
-			if strings.TrimSpace(r) == receiver {
-				return m
+			present[strings.TrimSpace(r)] = true
+		}
+		for _, name := range names {
+			if present[name] {
+				continue
+			}
+			if existing == "" {
+				existing = name
+			} else {
+				existing += ", " + name
 			}
 		}
-		if existing == "" {
-			return sub[1] + receiver + "]"
-		}
-		return sub[1] + existing + ", " + receiver + "]"
+		return sub[1] + existing + "]"
 	})
 
 	return os.WriteFile(configFile, []byte(content), 0o644)

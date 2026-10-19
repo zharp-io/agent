@@ -1,10 +1,24 @@
 #!/usr/bin/env bash
 # Zharp Collector — installer
-# Downloads the binary and prints next steps.
+#
+# With an API key it installs, finds what runs on this server and starts collecting — no questions:
+#   curl -fsSL https://raw.githubusercontent.com/zharp-io/agent/main/install.sh | sudo bash -s -- --api-key zh_...
+# Without one it installs the binary and points at the guided setup.
 set -euo pipefail
 
 REPO="zharp-io/agent"
 INSTALL_DIR="/usr/local/bin"
+
+API_KEY="${ZHARP_API_KEY:-}"
+ENDPOINT="${ZHARP_ENDPOINT:-}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --api-key|--token) API_KEY="$2"; shift 2 ;;
+    --endpoint|--server) ENDPOINT="$2"; shift 2 ;;
+    --version) ZHARP_VERSION="$2"; shift 2 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
 
 # ── platform ──────────────────────────────────────────────────────────────────
 _UNAME="$(uname -s)"
@@ -57,6 +71,17 @@ $FETCH "https://github.com/$REPO/releases/download/$VERSION/$ARCHIVE" -o "$TMP/$
 tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
 install -m 755 "$TMP/zharp-collector-${OS}-${ARCH}" "$INSTALL_DIR/zharp-collector"
 echo "  Installed → $INSTALL_DIR/zharp-collector"
+
+# ── set up ────────────────────────────────────────────────────────────────────
+if [[ -n "$API_KEY" ]]; then
+  if [[ "$(id -u)" != "0" ]]; then
+    echo "  Setting up the service needs root. Run: sudo $INSTALL_DIR/zharp-collector install --yes --api-key <key>" >&2
+    exit 1
+  fi
+  ARGS=(install --yes --api-key "$API_KEY")
+  [[ -n "$ENDPOINT" ]] && ARGS+=(--endpoint "$ENDPOINT")
+  exec "$INSTALL_DIR/zharp-collector" "${ARGS[@]}"
+fi
 
 # ── done ──────────────────────────────────────────────────────────────────────
 echo

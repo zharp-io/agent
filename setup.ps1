@@ -1,7 +1,9 @@
 # Zharp Collector — Windows installer
-# Downloads the binary and prints next steps.
 #
-# Run as Administrator:
+# Run as Administrator. With an API key it installs, finds what runs on this server and starts
+# collecting — no questions:
+#   $env:ZHARP_API_KEY="zh_..."; irm https://raw.githubusercontent.com/zharp-io/agent/main/setup.ps1 | iex
+# Without one it installs the binary and points at the guided setup:
 #   irm https://raw.githubusercontent.com/zharp-io/agent/main/setup.ps1 | iex
 #
 # Or download and run locally:
@@ -35,6 +37,15 @@ Write-Host "  Downloading zharp-collector $VERSION..."
 New-Item -ItemType Directory -Force -Path $INSTALL_DIR | Out-Null
 Invoke-WebRequest -Uri $URL -OutFile $EXE_PATH -UseBasicParsing
 Write-Host "  Installed -> $EXE_PATH"
+
+# ── set up ──────────────────────────────────────────────────────────────────
+if ($env:ZHARP_API_KEY) {
+    $setupArgs = @("install", "--yes", "--api-key", $env:ZHARP_API_KEY)
+    if ($env:ZHARP_ENDPOINT) { $setupArgs += @("--endpoint", $env:ZHARP_ENDPOINT) }
+    & $EXE_PATH @setupArgs
+    # return, not exit: under `irm | iex` exit would close the window it runs in.
+    return
+}
 
 # ── done ────────────────────────────────────────────────────────────────────
 Write-Host
