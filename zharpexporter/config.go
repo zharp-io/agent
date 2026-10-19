@@ -25,7 +25,18 @@ type Config struct {
 	// InventoryFile is what `zharp-collector install` found on this host. Its contents go out
 	// with every heartbeat so the dashboard can show what is collected and what needs setup.
 	InventoryFile string `mapstructure:"inventory_file"`
+
+	// Database names the one database this exporter instance carries metrics for, as the id of
+	// the receiver that reads it ("postgresql/orders"). `zharp-collector add <engine> --name`
+	// gives each extra database of an engine its own pipeline ending in its own exporter, since
+	// nothing in the receivers' own metrics tells two PostgreSQL servers on one host apart. It
+	// is stamped on every point as DatabaseAttribute, and the instance sends no heartbeat —
+	// the main exporter already does.
+	Database string `mapstructure:"database"`
 }
+
+// DatabaseAttribute is the attribute the backend reads to tell databases of one engine apart.
+const DatabaseAttribute = "zharp.database"
 
 // baseURL is the API every request goes to, without a trailing slash.
 func (c *Config) baseURL() string {

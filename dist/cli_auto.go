@@ -118,20 +118,31 @@ func existing(paths ...string) []string {
 // connections refused because the limit was hit. The receiver names come back comma-separated,
 // ready for the metrics pipeline.
 func mysqlReceivers(host, port, user string) (receivers, block string) {
+	return mysqlReceiversNamed(host, port, user, "")
+}
+
+// mysqlReceiversNamed is mysqlReceivers for a named database (`add mysql --name NAME`): both
+// receivers and the password variable carry the name, so they sit beside the default ones.
+func mysqlReceiversNamed(host, port, user, name string) (receivers, block string) {
+	id, env := namedIDs("mysql", "MYSQL_PASSWORD", name)
+	query := "sqlquery/mysql"
+	if name != "" {
+		query = "sqlquery/mysql_" + strings.ToLower(strings.TrimSpace(name))
+	}
 	block = fmt.Sprintf(`
-  mysql:
+  %[4]s:
     endpoint: %[1]s:%[2]s
     username: %[3]s
-    password: "${env:MYSQL_PASSWORD}"
+    password: "${env:%[5]s}"
     collection_interval: 30s
     metrics:
       mysql.connection.errors:
         enabled: true
       mysql.max_used_connections:
         enabled: true
-  sqlquery/mysql:
+  %[6]s:
     driver: mysql
-    datasource: "%[3]s:${env:MYSQL_PASSWORD}@tcp(%[1]s:%[2]s)/"
+    datasource: "%[3]s:${env:%[5]s}@tcp(%[1]s:%[2]s)/"
     collection_interval: 30s
     queries:
       - sql: "SELECT @@max_connections AS max_connections"
@@ -140,8 +151,8 @@ func mysqlReceivers(host, port, user string) (receivers, block string) {
             value_column: max_connections
             data_type: gauge
             value_type: int
-`, host, port, user)
-	return "mysql, sqlquery/mysql", block
+`, host, port, user, id, env, query)
+	return id + ", " + query, block
 }
 
 func dockerBlock() string {

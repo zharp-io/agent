@@ -16,6 +16,7 @@ import (
 // Examples:
 //
 //	zharp-collector add postgres --host localhost --port 5432 --user zharp_monitor --password secret --db myapp
+//	zharp-collector add postgres --name orders --host 10.0.0.12 --user zharp_monitor --password secret --db orders
 //	zharp-collector add docker
 //	zharp-collector add logs --path /var/log/myapp/app.log --service myapp
 func cliAdd() {
@@ -50,15 +51,32 @@ func cliAdd() {
 		printAddTypeUsage(svcType)
 		os.Exit(1)
 	}
+	name := databaseNameFlag(svcType, args)
 
-	applyAddition(configFile, envFile, receiver, block, logSources, envVars)
+	if name != "" {
+		applyNamedDatabase(configFile, envFile, receiver, block, envVars, name)
+	} else {
+		if block != "" && receiverConfigured(configFile, receiver) {
+			// The engine's default receiver is already there: its settings stay as they were
+			// (only the password in the env file is updated). A second database of this engine
+			// needs a name of its own.
+			uiWarn(fmt.Sprintf("%s is already configured on this host; its settings were kept.", inventoryFor(svcType).Label))
+			uiDimMsg(fmt.Sprintf("To monitor another database of this engine, add it with a name: zharp-collector add %s --name NAME ...", os.Args[2]))
+		}
+		applyAddition(configFile, envFile, receiver, block, logSources, envVars)
+	}
 
-	// Tell the dashboard on the next heartbeat. Custom log sources are kept apart by name.
+	// Tell the dashboard on the next heartbeat. Custom log sources are kept apart by name, and so
+	// are named databases.
 	item := inventoryFor(svcType)
 	if svcType == "custom_log" && len(logSources) > 0 {
 		item.Type = "log:" + logSources[0].Name
 		item.Label = logSources[0].Name + " logs"
 		item.Detail = strings.Join(logSources[0].Paths, ", ")
+	}
+	if name != "" {
+		item.Type = svcType + ":" + name
+		item.Label = fmt.Sprintf("%s (%s)", item.Label, name)
 	}
 	markInventory(item)
 
@@ -85,6 +103,7 @@ func parseAddArgs(svcType string, args []string) (receiver, block string, logSou
 		user := fs.String("user", "zharp_monitor", "")
 		pass := fs.String("password", "", "")
 		db := fs.String("db", "postgres", "")
+		name := fs.String("name", "", "")
 		if e := fs.Parse(args); e != nil {
 			err = e
 			return
@@ -93,25 +112,30 @@ func parseAddArgs(svcType string, args []string) (receiver, block string, logSou
 			err = fmt.Errorf("--password is required for postgres")
 			return
 		}
-		receiver = "postgresql"
+		if err = checkDatabaseName(*name); err != nil {
+			return
+		}
+		id, env := namedIDs("postgresql", "PG_PASSWORD", *name)
+		receiver = id
 		block = fmt.Sprintf(`
-  postgresql:
+  %s:
     endpoint: %s:%s
     username: %s
-    password: "${env:PG_PASSWORD}"
+    password: "${env:%s}"
     databases:
       - %s
     collection_interval: 30s
     tls:
       insecure: true
-`, *host, *port, *user, *db)
-		envVars["PG_PASSWORD"] = *pass
+`, id, *host, *port, *user, env, *db)
+		envVars[env] = *pass
 
 	case "mysql":
 		host := fs.String("host", "localhost", "")
 		port := fs.String("port", "3306", "")
 		user := fs.String("user", "zharp_monitor", "")
 		pass := fs.String("password", "", "")
+		name := fs.String("name", "", "")
 		if e := fs.Parse(args); e != nil {
 			err = e
 			return
@@ -120,37 +144,47 @@ func parseAddArgs(svcType string, args []string) (receiver, block string, logSou
 			err = fmt.Errorf("--password is required for mysql")
 			return
 		}
-		receiver, block = mysqlReceivers(*host, *port, *user)
-		envVars["MYSQL_PASSWORD"] = *pass
+		if err = checkDatabaseName(*name); err != nil {
+			return
+		}
+		_, env := namedIDs("mysql", "MYSQL_PASSWORD", *name)
+		receiver, block = mysqlReceiversNamed(*host, *port, *user, *name)
+		envVars[env] = *pass
 
 	case "redis":
 		endpoint := fs.String("endpoint", "localhost:6379", "")
 		pass := fs.String("password", "", "")
+		name := fs.String("name", "", "")
 		if e := fs.Parse(args); e != nil {
 			err = e
 			return
 		}
-		receiver = "redis"
+		if err = checkDatabaseName(*name); err != nil {
+			return
+		}
+		id, env := namedIDs("redis", "REDIS_PASSWORD", *name)
+		receiver = id
 		if *pass != "" {
 			block = fmt.Sprintf(`
-  redis:
+  %s:
     endpoint: %s
-    password: "${env:REDIS_PASSWORD}"
+    password: "${env:%s}"
     collection_interval: 30s
-`, *endpoint)
-			envVars["REDIS_PASSWORD"] = *pass
+`, id, *endpoint, env)
+			envVars[env] = *pass
 		} else {
 			block = fmt.Sprintf(`
-  redis:
+  %s:
     endpoint: %s
     collection_interval: 30s
-`, *endpoint)
+`, id, *endpoint)
 		}
 
 	case "mongo":
 		endpoint := fs.String("endpoint", "localhost:27017", "")
 		user := fs.String("user", "zharp_monitor", "")
 		pass := fs.String("password", "", "")
+		name := fs.String("name", "", "")
 		if e := fs.Parse(args); e != nil {
 			err = e
 			return
@@ -159,18 +193,22 @@ func parseAddArgs(svcType string, args []string) (receiver, block string, logSou
 			err = fmt.Errorf("--password is required for mongo")
 			return
 		}
-		receiver = "mongodb"
+		if err = checkDatabaseName(*name); err != nil {
+			return
+		}
+		id, env := namedIDs("mongodb", "MONGO_PASSWORD", *name)
+		receiver = id
 		block = fmt.Sprintf(`
-  mongodb:
+  %s:
     hosts:
       - endpoint: %s
     username: %s
-    password: "${env:MONGO_PASSWORD}"
+    password: "${env:%s}"
     collection_interval: 30s
     tls:
       insecure: true
-`, *endpoint, *user)
-		envVars["MONGO_PASSWORD"] = *pass
+`, id, *endpoint, *user, env)
+		envVars[env] = *pass
 
 	case "docker":
 		if e := fs.Parse(args); e != nil {
@@ -604,10 +642,10 @@ func printAddUsage() {
 	fmt.Println("  Usage: zharp-collector add <type> [flags]")
 	fmt.Println()
 	fmt.Println("  Types:")
-	fmt.Println("    postgres  --host HOST --port PORT --user USER --password PASS --db DB")
-	fmt.Println("    mysql     --host HOST --port PORT --user USER --password PASS")
-	fmt.Println("    redis     --endpoint HOST:PORT [--password PASS]")
-	fmt.Println("    mongo     --endpoint HOST:PORT --user USER --password PASS")
+	fmt.Println("    postgres  --host HOST --port PORT --user USER --password PASS --db DB [--name NAME]")
+	fmt.Println("    mysql     --host HOST --port PORT --user USER --password PASS [--name NAME]")
+	fmt.Println("    redis     --endpoint HOST:PORT [--password PASS] [--name NAME]")
+	fmt.Println("    mongo     --endpoint HOST:PORT --user USER --password PASS [--name NAME]")
 	fmt.Println("    docker")
 	fmt.Println("    nginx     [--service NAME] [--access-log PATH] [--error-log PATH]")
 	fmt.Println("    apache    [--service NAME] [--access-log PATH]")
@@ -619,8 +657,14 @@ func printAddUsage() {
 	fmt.Println("    --service sets the name shown in the Zharp dashboard.")
 	fmt.Println("    For 'logs', if omitted it is detected from file content or filename.")
 	fmt.Println()
+	fmt.Println("  Several databases of one engine:")
+	fmt.Println("    --name gives a database a name of its own, so a second (third, ...) PostgreSQL,")
+	fmt.Println("    MySQL, Redis or MongoDB server is reported separately. The first one needs no")
+	fmt.Println("    name; each further one needs a different name.")
+	fmt.Println()
 	fmt.Println("  Examples:")
 	fmt.Println(`    sudo zharp-collector add postgres --host localhost --user zharp_monitor --password secret --db myapp`)
+	fmt.Println(`    sudo zharp-collector add postgres --name orders --host 10.0.0.12 --user zharp_monitor --password secret --db orders`)
 	fmt.Println(`    sudo zharp-collector add docker`)
 	fmt.Println(`    sudo zharp-collector add logs --path /var/log/myapp/app.log --service myapp`)
 	fmt.Println(`    sudo zharp-collector add nginx --service frontend`)
@@ -630,13 +674,13 @@ func printAddUsage() {
 func printAddTypeUsage(svcType string) {
 	switch svcType {
 	case "pg":
-		fmt.Fprintln(os.Stderr, "  Usage: zharp-collector add postgres --host HOST --port PORT --user USER --password PASS --db DB")
+		fmt.Fprintln(os.Stderr, "  Usage: zharp-collector add postgres --host HOST --port PORT --user USER --password PASS --db DB [--name NAME]")
 	case "mysql":
-		fmt.Fprintln(os.Stderr, "  Usage: zharp-collector add mysql --host HOST --port PORT --user USER --password PASS")
+		fmt.Fprintln(os.Stderr, "  Usage: zharp-collector add mysql --host HOST --port PORT --user USER --password PASS [--name NAME]")
 	case "redis":
-		fmt.Fprintln(os.Stderr, "  Usage: zharp-collector add redis --endpoint HOST:PORT [--password PASS]")
+		fmt.Fprintln(os.Stderr, "  Usage: zharp-collector add redis --endpoint HOST:PORT [--password PASS] [--name NAME]")
 	case "mongo":
-		fmt.Fprintln(os.Stderr, "  Usage: zharp-collector add mongo --endpoint HOST:PORT --user USER --password PASS")
+		fmt.Fprintln(os.Stderr, "  Usage: zharp-collector add mongo --endpoint HOST:PORT --user USER --password PASS [--name NAME]")
 	case "custom_log":
 		fmt.Fprintln(os.Stderr, "  Usage: zharp-collector add logs --path /path/to/file.log [--service myapp]")
 	}

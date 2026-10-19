@@ -52,7 +52,9 @@ func (e *zharpMetricsExporter) Start(_ context.Context, _ component.Host) error 
 	e.logger.Info("Zharp metrics exporter started", zap.String("endpoint", e.cfg.baseURL()))
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancel = cancel
-	go e.heartbeatLoop(ctx)
+	if e.cfg.Database == "" {
+		go e.heartbeatLoop(ctx)
+	}
 	return nil
 }
 
@@ -110,6 +112,7 @@ func (e *zharpMetricsExporter) ConsumeMetrics(ctx context.Context, md pmetric.Me
 	if len(points) == 0 {
 		return nil
 	}
+	stampDatabase(points, e.cfg.Database)
 	for i := 0; i < len(points); i += e.cfg.BatchSize {
 		end := i + e.cfg.BatchSize
 		if end > len(points) {
@@ -152,6 +155,20 @@ func (e *zharpMetricsExporter) shipMetrics(ctx context.Context, batch []metricPo
 
 	e.logger.Debug("shipped metrics to Zharp", zap.Int("count", len(batch)))
 	return nil
+}
+
+// stampDatabase marks every point with the database it came from, for an exporter instance that
+// carries one named database. Points of the default, unnamed receivers are left as they were.
+func stampDatabase(points []metricPoint, database string) {
+	if database == "" {
+		return
+	}
+	for i := range points {
+		if points[i].Attributes == nil {
+			points[i].Attributes = map[string]any{}
+		}
+		points[i].Attributes[DatabaseAttribute] = database
+	}
 }
 
 func convertMetrics(md pmetric.Metrics) []metricPoint {
