@@ -27,6 +27,10 @@ type logEntry struct {
 	Level     string         `json:"level"`
 	Message   string         `json:"message"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
+	// Unified service tags. Omitted when unknown so older backends see the payload they always did.
+	Env     string `json:"env,omitempty"`
+	Version string `json:"version,omitempty"`
+	Source  string `json:"source,omitempty"`
 }
 
 type ingestPayload struct {
@@ -110,10 +114,7 @@ func (e *zharpLogsExporter) convertLogs(ld plog.Logs) []logEntry {
 	for i := 0; i < ld.ResourceLogs().Len(); i++ {
 		rl := ld.ResourceLogs().At(i)
 
-		serviceName := "unknown"
-		if v, ok := rl.Resource().Attributes().Get("service.name"); ok {
-			serviceName = v.AsString()
-		}
+		resource := rl.Resource().Attributes()
 
 		for j := 0; j < rl.ScopeLogs().Len(); j++ {
 			sl := rl.ScopeLogs().At(j)
@@ -144,12 +145,21 @@ func (e *zharpLogsExporter) convertLogs(ld plog.Logs) []logEntry {
 					})
 				}
 
+				tags := resolveTags(resource, lr.Attributes())
+				serviceName := tags.Service
+				if serviceName == "" {
+					serviceName = "unknown"
+				}
+
 				entries = append(entries, logEntry{
 					Timestamp: ts.UTC().Format(time.RFC3339Nano),
 					Service:   serviceName,
 					Level:     severityToLevel(lr.SeverityNumber()),
 					Message:   lr.Body().AsString(),
 					Metadata:  meta,
+					Env:       tags.Env,
+					Version:   tags.Version,
+					Source:    tags.Source,
 				})
 			}
 		}

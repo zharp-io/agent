@@ -26,6 +26,10 @@ type Config struct {
 	// with every heartbeat so the dashboard can show what is collected and what needs setup.
 	InventoryFile string `mapstructure:"inventory_file"`
 
+	// Kind tells Zharp how long this agent's host lives: empty for a server, "sidecar" for a
+	// serverless task or instance, which Zharp stops listing once it's gone.
+	Kind string `mapstructure:"kind"`
+
 	// Database names the one database this exporter instance carries metrics for, as the id of
 	// the receiver that reads it ("postgresql/orders"). `zharp-collector add <engine> --name`
 	// gives each extra database of an engine its own pipeline ending in its own exporter, since

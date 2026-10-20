@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"math"
 	"runtime"
 	"time"
@@ -87,6 +88,9 @@ func (e *zharpMetricsExporter) sendHeartbeat(ctx context.Context) {
 	}
 	if services := readInventory(e.cfg.InventoryFile); services != nil {
 		payload["services"] = services
+	}
+	if e.cfg.Kind != "" {
+		payload["kind"] = e.cfg.Kind
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -177,6 +181,10 @@ func convertMetrics(md pmetric.Metrics) []metricPoint {
 	for i := 0; i < md.ResourceMetrics().Len(); i++ {
 		rm := md.ResourceMetrics().At(i)
 		resourceAttrs := attrsToMap(rm.Resource().Attributes())
+		// Resource attributes ride on every point, which is how service.name,
+		// deployment.environment.name and service.version reach the backend. An SDK on the
+		// older conventions sends deployment.environment; carry it under the current key too.
+		normaliseEnvAttr(resourceAttrs)
 
 		for j := 0; j < rm.ScopeMetrics().Len(); j++ {
 			sm := rm.ScopeMetrics().At(j)
@@ -250,6 +258,37 @@ func extractPoints(m pmetric.Metric, resourceAttrs map[string]any) []metricPoint
 				Unit:       unit,
 				Attributes: mergeAttrs(attrsToMap(dp.Attributes())),
 			})
+		}
+	case pmetric.MetricTypeSummary:
+		// What StatsD timers, histograms and distributions become: sent like a histogram (the
+		// average, as name.avg) plus each quantile the summary carries as its own gauge
+		// (name.p50, name.p95, …), so latency percentiles aren't lost.
+		for i := 0; i < m.Summary().DataPoints().Len(); i++ {
+			dp := m.Summary().DataPoints().At(i)
+			attrs := mergeAttrs(attrsToMap(dp.Attributes()))
+			val := 0.0
+			if dp.Count() > 0 {
+				val = dp.Sum() / float64(dp.Count())
+			}
+			pts = append(pts, metricPoint{
+				Name:       name + ".avg",
+				Timestamp:  tsStr(dp.Timestamp()),
+				Value:      val,
+				Type:       "histogram",
+				Unit:       unit,
+				Attributes: attrs,
+			})
+			for q := 0; q < dp.QuantileValues().Len(); q++ {
+				qv := dp.QuantileValues().At(q)
+				pts = append(pts, metricPoint{
+					Name:       fmt.Sprintf("%s.p%s", name, strconv.FormatFloat(qv.Quantile()*100, 'f', -1, 64)),
+					Timestamp:  tsStr(dp.Timestamp()),
+					Value:      qv.Value(),
+					Type:       "gauge",
+					Unit:       unit,
+					Attributes: attrs,
+				})
+			}
 		}
 	}
 	return pts

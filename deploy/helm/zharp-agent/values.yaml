@@ -1,0 +1,117 @@
+# Zharp agent — a DaemonSet that runs on every node.
+#
+#   helm install zharp-agent ./deploy/helm/zharp-agent -n zharp-system --create-namespace \
+#     --set apiKey=YOUR_API_KEY --set environment=production --set clusterName=prod-eu
+
+# Workspace API key. Leave empty and set existingSecret to keep it out of Helm values.
+apiKey: ""
+# A Secret holding the API key (created beforehand: kubectl create secret generic zharp-agent
+# --from-literal=api-key=...). Used instead of apiKey when set.
+existingSecret: ""
+existingSecretKey: api-key
+
+# Zharp API URL, for self-hosted installs. Empty sends to Zharp's cloud.
+endpoint: ""
+
+# deployment.environment.name for data whose pod has no zharp.io/env annotation.
+environment: ""
+# k8s.cluster.name on everything this agent sends.
+clusterName: ""
+
+image:
+  repository: ghcr.io/zharp-io/agent
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+logs:
+  # Every container's stdout and stderr on the node (/var/log/pods).
+  enabled: true
+  # How lines are joined into records when a pod has no zharp.io/logs-multiline annotation:
+  # auto (stack traces become one record), off, or a regex matching the first line of a record.
+  multiline: auto
+  # Namespaces whose logs are not collected at all (the agent's own pods are always skipped).
+  excludeNamespaces: []
+  # Where the agent remembers how far it read each file (a hostPath), so a restart neither
+  # replays nor skips lines.
+  stateDir: /var/lib/zharp-agent
+
+metrics:
+  enabled: true
+  # Node, pod and container CPU, memory, network and filesystem from the kubelet.
+  kubelet: true
+  # The node's own CPU, memory, disk, network and load (reads the host's /proc).
+  host: true
+  collectionInterval: 30s
+  # The kubelet's serving certificate is self-signed on most clusters.
+  kubeletInsecureSkipVerify: true
+
+traces:
+  # Applications in the cluster send OTLP to this agent: grpc 4317, http 4318.
+  enabled: true
+
+otlp:
+  # A Service in front of the agents. internalTrafficPolicy Local keeps traffic on the node, so
+  # every span is tagged with the pod that sent it.
+  # Apps: OTEL_EXPORTER_OTLP_ENDPOINT=http://zharp-agent.<namespace>.svc:4318
+  service:
+    enabled: true
+  # Or open the ports on each node: OTEL_EXPORTER_OTLP_ENDPOINT=http://$(HOST_IP):4318
+  hostPort:
+    enabled: false
+
+# Processing rules for every container's logs (pods can add their own with the
+# zharp.io/logs-exclude and zharp.io/logs-mask annotations).
+rules:
+  # Built-in masks: card numbers (Luhn-checked), bearer tokens, JWTs, AWS keys, private keys.
+  defaultMasks: true
+  # Turn single built-in masks off: credit_card, bearer_token, jwt, aws_access_key,
+  # aws_secret_key, private_key.
+  disableDefaultMasks: []
+  # Drop records matching any of these regexes (RE2).
+  exclude: []
+  #  - 'GET /healthz'
+  # Rewrite what matches: [{pattern: '...', replace: '...'}]; replace defaults to [REDACTED].
+  mask: []
+  #  - pattern: '(password=)\S+'
+  #    replace: '${1}***'
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 192Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+# Run on every node, control plane and tainted nodes included.
+tolerations:
+  - operator: Exists
+
+nodeSelector: {}
+affinity: {}
+priorityClassName: ""
+podAnnotations: {}
+podLabels: {}
+# Extra environment variables for the agent container.
+extraEnv: []
+
+# The agent reads /var/log/pods, which only root can read on most nodes.
+securityContext:
+  runAsUser: 0
+  runAsGroup: 0
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}

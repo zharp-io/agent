@@ -15,6 +15,7 @@ type autoPlan struct {
 	metricsReceivers []string
 	receiverBlocks   []string
 	logSources       []LogSource
+	logReceivers     []LogReceiver // application logs: containers, journal, PM2
 	envVars          map[string]string
 	hasDocker        bool
 	tracing          bool
@@ -29,6 +30,11 @@ type autoPlan struct {
 // a password, and application traces are accepted on localhost. PostgreSQL, MySQL and MongoDB
 // need a monitoring user, so they are reported as waiting rather than guessed at.
 func planAutomatic(detected []ServiceOption) autoPlan {
+	return planAutomaticWith(detected, true)
+}
+
+// planAutomaticWith is planAutomatic with application logs (containers, journal, PM2) on or off.
+func planAutomaticWith(detected []ServiceOption, appLogs bool) autoPlan {
 	p := autoPlan{
 		metricsReceivers: []string{"hostmetrics"},
 		envVars:          map[string]string{},
@@ -39,7 +45,11 @@ func planAutomatic(detected []ServiceOption) autoPlan {
 		},
 	}
 
+	syslogFound, journal := false, false
 	for _, s := range detected {
+		if isAppLogType(s.Type) && !appLogs {
+			continue
+		}
 		switch s.Type {
 		case "nginx_log":
 			p.addLogs(s.Type, "nginx logs", "nginx", existing(nginxLogPaths()...))
@@ -48,7 +58,22 @@ func planAutomatic(detected []ServiceOption) autoPlan {
 				"/var/log/apache2/access.log", "/var/log/apache2/error.log",
 				"/var/log/httpd/access_log", "/var/log/httpd/error_log"))
 		case "syslog":
-			p.addLogs(s.Type, "System logs", "syslog", existing("/var/log/syslog", "/var/log/messages", "/var/log/auth.log"))
+			// Added after the loop: which files depends on whether the journal is read.
+			syslogFound = true
+		case "docker_logs":
+			p.logReceivers = append(p.logReceivers, dockerLogsReceiver())
+			p.hasDocker = true
+			p.inventory = append(p.inventory, InventoryItem{Type: s.Type, Label: "Docker container logs", Status: invCollecting, Detail: s.Detail})
+		case "journald":
+			journal = true
+			p.logReceivers = append(p.logReceivers, journaldReceiver())
+			p.inventory = append(p.inventory, InventoryItem{Type: s.Type, Label: "Service logs (journal)", Status: invCollecting, Detail: "systemd services; operating-system units left out"})
+		case "pm2":
+			o := planPM2(pm2DirsFn())
+			if len(o.granted) > 0 {
+				p.logReceivers = append(p.logReceivers, pm2Receiver(dirPaths(o.granted)))
+			}
+			p.inventory = append(p.inventory, pm2Inventory(o)...)
 		case "iis_log":
 			// IIS writes one folder per site under LogFiles; the glob picks up every one of them.
 			p.addLogs(s.Type, "IIS logs", "iis", []string{`C:\inetpub\logs\LogFiles\**\*.log`})
@@ -74,6 +99,9 @@ func planAutomatic(detected []ServiceOption) autoPlan {
 		case "mongo":
 			p.inventory = append(p.inventory, InventoryItem{Type: s.Type, Label: "MongoDB", Status: invNeedsSetup, Detail: "Needs a read-only monitoring user"})
 		}
+	}
+	if syslogFound {
+		p.addSystemLogs(journal)
 	}
 	return p
 }

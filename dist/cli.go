@@ -8,6 +8,14 @@ import (
 // handleSubcommand checks os.Args[1] and dispatches CLI subcommands.
 // Returns true if a subcommand was handled (caller should return early).
 func handleSubcommand() bool {
+	if len(os.Args) >= 2 && os.Args[1] == "health" {
+		cliHealth()
+		return true
+	}
+	// Serverless sidecar: config from the environment (cli_sidecar.go).
+	if handled, ok := maybeSidecar(); ok {
+		return handled
+	}
 	if len(os.Args) < 2 {
 		return false
 	}
@@ -72,6 +80,8 @@ func cliHelp() {
 	fmt.Println("    status               Show service status")
 	fmt.Println("    logs                 Tail service logs")
 	fmt.Println("    uninstall            Remove service and config")
+	fmt.Println("    sidecar              Run as a serverless sidecar, configured from env (sidecar --help)")
+	fmt.Println("    health               Exit 0 if the running collector's health check is OK")
 	fmt.Println()
 	fmt.Println("  add types:")
 	fmt.Println("    postgres  --host HOST --port PORT --user USER --password PASS --db DB")
@@ -79,11 +89,13 @@ func cliHelp() {
 	fmt.Println("    redis     --endpoint HOST:PORT [--password PASS]")
 	fmt.Println("    mongo     --endpoint HOST:PORT --user USER --password PASS")
 	fmt.Println("    docker")
+	fmt.Println("    docker-logs  journal  pm2   application logs (collected by install unless --no-app-logs)")
 	fmt.Println("    nginx     --access-log PATH [--error-log PATH]")
 	fmt.Println("    apache    --access-log PATH")
 	fmt.Println("    syslog")
 	fmt.Println("    iis       --log-folder PATH")
 	fmt.Println("    logs      --path PATH  (repeat for multiple files)")
+	fmt.Println("    rule      exclude --pattern RE | mask --pattern RE [--replace S] | default-masks --off|--on")
 	fmt.Println()
 	fmt.Println("  Without a subcommand the collector daemon runs directly.")
 	fmt.Println()

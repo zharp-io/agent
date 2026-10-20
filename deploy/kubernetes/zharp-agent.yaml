@@ -1,0 +1,377 @@
+# Generated from deploy/helm/zharp-agent by deploy/kubernetes/render.sh — don't edit by hand.
+# The API key comes from a Secret you create first:
+#   kubectl create namespace zharp-system
+#   kubectl -n zharp-system create secret generic zharp-agent --from-literal=api-key=YOUR_API_KEY
+---
+# Source: zharp-agent/templates/rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: zharp-agent
+  namespace: zharp-system
+  labels:
+    app.kubernetes.io/name: zharp-agent
+    app.kubernetes.io/instance: zharp-agent
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: zharp-agent-0.1.0
+---
+# Source: zharp-agent/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zharp-agent
+  namespace: zharp-system
+  labels:
+    app.kubernetes.io/name: zharp-agent
+    app.kubernetes.io/instance: zharp-agent
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: zharp-agent-0.1.0
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      # Remembers how far each log file was read, across restarts.
+      file_storage:
+        directory: /var/lib/zharp-agent/storage
+        create_directory: true
+
+    receivers:
+      # Every container's stdout and stderr on this node.
+      filelog:
+        include:
+          - /var/log/pods/*/*/*.log
+        exclude:
+          # The agent's own output.
+          - /var/log/pods/zharp-system_zharp-agent-*_*/*/*.log
+        start_at: end
+        include_file_path: true
+        include_file_name: false
+        storage: file_storage
+        retry_on_failure:
+          enabled: true
+        operators:
+          # containerd/CRI-O ("<time> stdout F <line>") and Docker JSON lines; joins lines the
+          # runtime split, and names the pod, namespace and container from the file path.
+          - type: container
+            id: container-parser
+            add_metadata_from_filepath: true
+      kubeletstats:
+        collection_interval: 30s
+        auth_type: serviceAccount
+        endpoint: https://${env:K8S_NODE_IP}:10250
+        insecure_skip_verify: true
+        metric_groups: [node, pod, container]
+      hostmetrics:
+        root_path: /hostfs
+        collection_interval: 30s
+        scrapers:
+          cpu:
+          memory:
+          load:
+          network:
+          disk:
+          filesystem:
+            exclude_mount_points:
+              mount_points: ['^/(dev|proc|sys|run|snap|var/lib/(kubelet|containerd|docker))(/|\z)']
+              match_type: regexp
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+      # Pod, namespace, node and workload names, and the zharp.io/* annotations and
+      # app.kubernetes.io labels the zharp_logs processor reads.
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        filter:
+          node_from_env_var: K8S_NODE_NAME
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.node.name
+            - k8s.deployment.name
+            - k8s.statefulset.name
+            - k8s.daemonset.name
+            - k8s.replicaset.name
+            - k8s.cronjob.name
+            - k8s.job.name
+            - k8s.container.name
+            - container.image.name
+            - container.image.tag
+          annotations:
+            - key_regex: zharp\.io/.*
+              from: pod
+          labels:
+            - key: app.kubernetes.io/name
+              from: pod
+            - key: app.kubernetes.io/version
+              from: pod
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.ip
+          - sources:
+              - from: connection
+      # Service, environment, version and source from the zharp.io/* annotations; opt-out;
+      # multi-line joining; exclude and mask rules (the pod's, then these); built-in masks.
+      zharp_logs:
+        default_masks: true
+        kubernetes:
+          enabled: true
+          multiline: 'auto'
+        rules: []
+      # host.name (the node) and k8s.cluster.name, from OTEL_RESOURCE_ATTRIBUTES.
+      resourcedetection:
+        detectors: [env]
+        timeout: 5s
+        override: false
+      batch:
+        send_batch_size: 1000
+        timeout: 5s
+
+    exporters:
+      zharp:
+        api_key: ${env:ZHARP_API_KEY}
+
+    service:
+      extensions: [health_check, file_storage]
+      pipelines:
+        logs:
+          receivers: [filelog, otlp]
+          processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection, batch]
+          exporters: [zharp]
+        metrics:
+          receivers: [kubeletstats, hostmetrics, otlp]
+          processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection, batch]
+          exporters: [zharp]
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, zharp_logs, batch]
+          exporters: [zharp]
+---
+# Source: zharp-agent/templates/rbac.yaml
+# Read-only: the pods on the node and their owners (for workload names and annotations), and
+# the kubelet's stats API.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: zharp-agent
+  labels:
+    app.kubernetes.io/name: zharp-agent
+    app.kubernetes.io/instance: zharp-agent
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: zharp-agent-0.1.0
+rules:
+  - apiGroups: [""]
+    resources: [pods, namespaces, nodes, endpoints]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [nodes/stats, nodes/proxy, nodes/metrics]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [replicasets, deployments, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+---
+# Source: zharp-agent/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: zharp-agent
+  labels:
+    app.kubernetes.io/name: zharp-agent
+    app.kubernetes.io/instance: zharp-agent
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: zharp-agent-0.1.0
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: zharp-agent
+subjects:
+  - kind: ServiceAccount
+    name: zharp-agent
+    namespace: zharp-system
+---
+# Source: zharp-agent/templates/service.yaml
+# OTLP for the cluster's applications. internalTrafficPolicy Local sends each pod's data to the
+# agent on its own node, which tags it with that pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: zharp-agent
+  namespace: zharp-system
+  labels:
+    app.kubernetes.io/name: zharp-agent
+    app.kubernetes.io/instance: zharp-agent
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: zharp-agent-0.1.0
+spec:
+  type: ClusterIP
+  internalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: zharp-agent
+    app.kubernetes.io/instance: zharp-agent
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+      protocol: TCP
+---
+# Source: zharp-agent/templates/daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: zharp-agent
+  namespace: zharp-system
+  labels:
+    app.kubernetes.io/name: zharp-agent
+    app.kubernetes.io/instance: zharp-agent
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: zharp-agent-0.1.0
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zharp-agent
+      app.kubernetes.io/instance: zharp-agent
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zharp-agent
+        app.kubernetes.io/instance: zharp-agent
+      annotations:
+        # Restart the agents when their config changes.
+        checksum/config: ba03b59dcaa0448d0d8ba04961b01ee1a848a2d99ad0804ff9c4c8dcbd3b08c5
+        # The agent's own logs are never collected (also excluded by path in the config).
+        zharp.io/logs: "false"
+    spec:
+      serviceAccountName: zharp-agent
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: agent
+          image: "ghcr.io/zharp-io/agent:latest"
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config=/etc/zharp-agent/config.yaml
+          env:
+            - name: ZHARP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: zharp-agent
+                  key: api-key
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: K8S_NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # host.name is the node, and the cluster name goes on everything sent.
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "host.name=$(K8S_NODE_NAME)"
+          ports:
+            - name: health
+              containerPort: 13133
+              protocol: TCP
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+            - name: otlp-http
+              containerPort: 4318
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 192Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 0
+            runAsUser: 0
+          volumeMounts:
+            - name: config
+              mountPath: /etc/zharp-agent
+              readOnly: true
+            - name: state
+              mountPath: /var/lib/zharp-agent
+            - name: varlogpods
+              mountPath: /var/log/pods
+              readOnly: true
+            # On Docker-runtime nodes the files under /var/log/pods link here.
+            - name: varlibdockercontainers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+            - name: hostfs
+              mountPath: /hostfs
+              readOnly: true
+              mountPropagation: HostToContainer
+      volumes:
+        - name: config
+          configMap:
+            name: zharp-agent
+        - name: state
+          hostPath:
+            path: /var/lib/zharp-agent
+            type: DirectoryOrCreate
+        - name: varlogpods
+          hostPath:
+            path: /var/log/pods
+        - name: varlibdockercontainers
+          hostPath:
+            path: /var/lib/docker/containers
+        - name: hostfs
+          hostPath:
+            path: /

@@ -64,16 +64,19 @@ func markInventory(item InventoryItem) {
 // inventoryFor describes a source that `add` just configured.
 func inventoryFor(svcType string) InventoryItem {
 	labels := map[string]string{
-		"pg":         "PostgreSQL",
-		"mysql":      "MySQL / MariaDB",
-		"redis":      "Redis",
-		"mongo":      "MongoDB",
-		"docker":     "Docker",
-		"nginx_log":  "nginx logs",
-		"apache_log": "Apache logs",
-		"syslog":     "System logs",
-		"iis_log":    "IIS logs",
-		"custom_log": "Log files",
+		"pg":          "PostgreSQL",
+		"mysql":       "MySQL / MariaDB",
+		"redis":       "Redis",
+		"mongo":       "MongoDB",
+		"docker":      "Docker",
+		"nginx_log":   "nginx logs",
+		"apache_log":  "Apache logs",
+		"syslog":      "System logs",
+		"iis_log":     "IIS logs",
+		"custom_log":  "Log files",
+		"docker_logs": "Docker container logs",
+		"journald":    "Service logs (journal)",
+		"pm2":         "PM2 app logs",
 	}
 	label := labels[svcType]
 	if label == "" {

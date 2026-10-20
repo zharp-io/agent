@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -46,6 +47,12 @@ func allOptions(detected []ServiceOption) []ServiceOption {
 		{Label: "Redis", Type: "redis", Detail: "in-memory store metrics"},
 		{Label: "MongoDB", Type: "mongo", Detail: "database metrics"},
 		{Label: "Docker", Type: "docker", Detail: "container metrics"},
+		{Label: "Docker container logs", Type: "docker_logs", Detail: "every container's output, by service"},
+	}
+	if runtime.GOOS == "linux" {
+		manual = append(manual,
+			ServiceOption{Label: "Service logs (journal)", Type: "journald", Detail: "systemd services from the journal"},
+			ServiceOption{Label: "PM2 app logs", Type: "pm2", Detail: "logs of apps run by PM2"})
 	}
 	if runtime.GOOS == "windows" {
 		manual = append(manual, ServiceOption{Label: "IIS logs", Type: "iis_log", Detail: "tail IIS W3C logs"})
@@ -167,6 +174,9 @@ func detectLinux() []ServiceOption {
 		opts = append(opts, ServiceOption{Label: "Docker", Type: "docker", Detail: detail, Detected: true})
 	}
 
+	// Application logs: container output, systemd services, PM2 apps.
+	opts = append(opts, detectAppLogs()...)
+
 	return opts
 }
 
@@ -201,8 +211,8 @@ func detectDarwin() []ServiceOption {
 
 	// Docker
 	if cnt, ok := dockerInfo(); ok {
-		_ = cnt
 		opts = append(opts, ServiceOption{Label: "Docker", Type: "docker", Detail: "Docker container metrics", Detected: true})
+		opts = append(opts, dockerLogsOption(cnt))
 	}
 
 	return opts
@@ -244,9 +254,34 @@ func detectWindows() []ServiceOption {
 
 	// Docker
 	if cnt, ok := dockerInfo(); ok {
-		_ = cnt
 		opts = append(opts, ServiceOption{Label: "Docker", Type: "docker", Detail: "Docker container metrics", Detected: true})
+		opts = append(opts, dockerLogsOption(cnt))
 	}
 
+	return opts
+}
+
+// dockerLogsOption is the container-logs source that comes with a reachable Docker.
+func dockerLogsOption(running int) ServiceOption {
+	detail := fmt.Sprintf("%d containers", running)
+	if running == 1 {
+		detail = "1 container"
+	}
+	return ServiceOption{Label: "Docker container logs", Type: "docker_logs", Detail: detail, Detected: true}
+}
+
+// detectAppLogs finds the Linux application-log sources: Docker containers, systemd services in
+// the journal, and PM2 apps.
+func detectAppLogs() []ServiceOption {
+	var opts []ServiceOption
+	if cnt, ok := dockerInfo(); ok {
+		opts = append(opts, dockerLogsOption(cnt))
+	}
+	if journalAvailable() {
+		opts = append(opts, ServiceOption{Label: "Service logs (journal)", Type: "journald", Detail: "systemd services; operating-system units left out", Detected: true})
+	}
+	if dirs := findPM2Dirs(); len(dirs) > 0 {
+		opts = append(opts, ServiceOption{Label: "PM2 app logs", Type: "pm2", Detail: strings.Join(pm2Apps(dirs), ", "), Detected: true})
+	}
 	return opts
 }

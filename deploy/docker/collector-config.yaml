@@ -7,26 +7,12 @@ extensions:
     endpoint: 0.0.0.0:13133
 
 receivers:
-  # Tail every container's logs — zero config needed per service
-  filelog:
-    include:
-      - /var/lib/docker/containers/*/*.log
-    include_file_path: true
-    include_file_name: false
-    operators:
-      - type: json_parser
-        timestamp:
-          parse_from: attributes.time
-          layout: '%Y-%m-%dT%H:%M:%S.%fZ'
-        on_error: drop
-      - type: move
-        from: attributes.log
-        to: body
-      # Attach the container ID so Zharp can group logs by container
-      - type: regex_parser
-        parse_from: attributes["log.file.path"]
-        regex: '/var/lib/docker/containers/(?P<container_id>[a-f0-9]+)/'
-        on_error: drop
+  # Every container's stdout and stderr through the Docker API. Containers are named and tuned
+  # with labels: zharp.service, zharp.env, zharp.version, zharp.source, zharp.logs=false (skip),
+  # zharp.logs.multiline, zharp.logs.exclude, zharp.logs.mask. Stack traces become one record.
+  docker_logs:
+    endpoint: unix:///var/run/docker.sock
+    state_file: /var/lib/zharp-collector/docker_logs.json
 
   # Receive traces/metrics/logs from apps that use the OpenTelemetry SDK
   otlp:
@@ -66,6 +52,15 @@ processors:
     detectors: [system, docker, env]
     timeout: 5s
 
+  # Exclude/mask rules for every log record and the built-in masks (card numbers, bearer
+  # tokens, JWTs, AWS keys, private keys). Add rules here:
+  #   rules:
+  #     - {type: exclude, pattern: 'GET /health'}
+  #     - {type: mask, pattern: '(password=)\S+', replace: '$${1}***'}
+  zharp_logs:
+    default_masks: true
+    rules: []
+
 exporters:
   zharp:
     api_key: "${env:ZHARP_API_KEY}"
@@ -74,8 +69,8 @@ service:
   extensions: [health_check]
   pipelines:
     logs:
-      receivers: [filelog, otlp]
-      processors: [memory_limiter, resourcedetection, batch]
+      receivers: [docker_logs, otlp]
+      processors: [memory_limiter, zharp_logs, resourcedetection, batch]
       exporters: [zharp]
     metrics:
       receivers: [hostmetrics, docker_stats, otlp]

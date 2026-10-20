@@ -120,47 +120,39 @@ docker service update --force zharp_zharp-collector
 
 ### Kubernetes / EKS / GKE / AKS
 
-Runs as a **DaemonSet** — one pod per node — collecting container logs and host metrics. Every log line and metric is automatically enriched with pod name, namespace, deployment, container name, and image tag.
+Runs as a **DaemonSet** — one pod per node, control plane included — collecting every container's logs (`/var/log/pods`, multi-line stack traces joined), kubelet node/pod/container metrics and node metrics, and receiving OTLP from your apps. Everything is tagged with pod, namespace, node and workload, and named by the `zharp.io/service`, `zharp.io/env`, `zharp.io/version` and `zharp.io/source` pod annotations (`zharp.io/logs: "false"` opts a pod out; `zharp.io/logs-exclude` and `zharp.io/logs-mask` add per-pod rules).
 
-**1. Create namespace and secret**
+**Helm**
+
+```bash
+helm install zharp-agent deploy/helm/zharp-agent \
+  --namespace zharp-system --create-namespace \
+  --set apiKey=YOUR_API_KEY --set environment=production --set clusterName=prod-eu
+```
+
+See `deploy/helm/zharp-agent/values.yaml` for `existingSecret`, `endpoint`, logs/metrics/traces switches, `rules` (exclude, mask, built-in masks), tolerations and resources.
+
+**Plain manifests** (rendered from the chart by `deploy/kubernetes/render.sh`)
 
 ```bash
 kubectl create namespace zharp-system
-
-kubectl create secret generic zharp-collector-secret \
-  --namespace zharp-system \
-  --from-literal=api-key=YOUR_API_KEY
-```
-
-**2. Deploy**
-
-```bash
+kubectl -n zharp-system create secret generic zharp-agent --from-literal=api-key=YOUR_API_KEY
 kubectl apply -k https://github.com/zharp-io/agent//deploy/kubernetes
 ```
 
-Or from a local clone:
+**Verify**
 
 ```bash
-kubectl apply -k deploy/kubernetes/
+kubectl -n zharp-system get pods -l app.kubernetes.io/name=zharp-agent -o wide
+kubectl -n zharp-system logs -l app.kubernetes.io/name=zharp-agent --follow
 ```
 
-**3. Verify**
-
-```bash
-kubectl -n zharp-system get pods
-kubectl -n zharp-system logs -l app=zharp-collector --follow
-```
-
-**Send OTLP from your application pods:**
+**Send OTLP from your application pods** (the Service keeps traffic on the pod's own node):
 
 ```yaml
 env:
-  - name: HOST_IP
-    valueFrom:
-      fieldRef:
-        fieldPath: status.hostIP
   - name: OTEL_EXPORTER_OTLP_ENDPOINT
-    value: "http://$(HOST_IP):4317"
+    value: "http://zharp-agent.zharp-system.svc:4318"
 ```
 
 ---
@@ -189,6 +181,8 @@ aws secretsmanager create-secret \
 ```
 
 **3. Register and deploy**
+
+Each instance also needs the agent's config at `/etc/zharp-collector/config.yaml` — see [deploy/ecs/README.md](deploy/ecs/README.md) for a user-data snippet.
 
 Edit `deploy/ecs/ec2-daemon-task.json` — replace `REGION` and `ACCOUNT_ID` — then:
 

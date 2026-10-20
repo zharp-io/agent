@@ -19,13 +19,37 @@ receivers:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mysqlreceiver v0.154.0
   # Reads MySQL's max_connections, which mysqlreceiver doesn't report, so connection usage can be a percentage.
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlqueryreceiver v0.154.0
+  # systemd journal (Linux only; runs journalctl). Application services, OS units filtered out in the config.
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/journaldreceiver v0.154.0
+  # Container logs through the Docker Engine API socket (the collector user can't read /var/lib/docker).
+  - gomod: github.com/zharp-io/agent/dockerlogsreceiver v0.0.1
+    path: ./dockerlogsreceiver
+  # Serverless sidecar mode (`zharp-collector sidecar`): ECS FireLens logs, DogStatsD-style metrics.
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/fluentforwardreceiver v0.154.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/statsdreceiver v0.154.0
+  # Kubernetes node, pod and container CPU, memory, network and filesystem from the kubelet.
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver v0.154.0
 
 processors:
   - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.154.0
   - gomod: go.opentelemetry.io/collector/processor/memorylimiterprocessor v0.154.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/resourcedetectionprocessor v0.154.0
+  # Kubernetes: pod, namespace, node and workload names, and the zharp.io/* pod annotations.
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/k8sattributesprocessor v0.154.0
+  # Processing rules (exclude, mask, built-in masks) and the Kubernetes annotation contract,
+  # multi-line joining for pod logs.
+  - gomod: github.com/zharp-io/agent/zharplogsprocessor v0.0.1
+    path: ./zharplogsprocessor
+  # Sidecar mode: unified service tags and platform attributes onto FireLens/OTLP data.
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/transformprocessor v0.154.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/groupbyattrsprocessor v0.154.0
 
 extensions:
   - gomod: go.opentelemetry.io/collector/extension/zpagesextension v0.154.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/extension/healthcheckextension v0.154.0
+  # Remembers the journal cursor and file offsets across restarts.
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/filestorage v0.154.0
+
+# Shared by dockerlogsreceiver and zharplogsprocessor: multi-line, rules, labels contract.
+replaces:
+  - github.com/zharp-io/agent/logrules v0.0.1 => ../logrules

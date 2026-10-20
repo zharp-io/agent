@@ -1,0 +1,14 @@
+The Zharp agent runs on every node ({{ include "zharp-agent.fullname" . }} DaemonSet in {{ .Release.Namespace }}).
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/name={{ include "zharp-agent.name" . }}
+
+Name your workloads with pod annotations (pod template metadata):
+  zharp.io/service: checkout      zharp.io/env: production      zharp.io/version: "1.4.2"
+  zharp.io/logs: "false"          (don't collect this pod's logs)
+  zharp.io/logs-exclude: 'GET /health'
+  zharp.io/logs-mask: '[{"pattern":"(token=)\\w+","replace":"${1}***"}]'
+{{- if and .Values.traces.enabled .Values.otlp.service.enabled }}
+
+Send traces from your applications:
+  OTEL_EXPORTER_OTLP_ENDPOINT=http://{{ include "zharp-agent.fullname" . }}.{{ .Release.Namespace }}.svc:4318
+{{- end }}

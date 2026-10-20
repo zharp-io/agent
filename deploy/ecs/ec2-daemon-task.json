@@ -1,33 +1,31 @@
 {
-  "_comment": "Zharp Collector — ECS EC2 daemon task definition",
-  "_usage": [
-    "1. Store your API key in AWS Secrets Manager:",
-    "   aws secretsmanager create-secret --name zharp/api-key --secret-string 'your_api_key'",
-    "",
-    "2. Register this task definition:",
-    "   aws ecs register-task-definition --cli-input-json file://ec2-daemon-task.json",
-    "",
-    "3. Create a daemon service (one container per EC2 instance):",
-    "   aws ecs create-service \\",
-    "     --cluster YOUR_CLUSTER \\",
-    "     --service-name zharp-collector \\",
-    "     --task-definition zharp-collector \\",
-    "     --scheduling-strategy DAEMON",
-    "",
-    "The collector will automatically tail logs from all containers on each EC2 instance."
-  ],
   "family": "zharp-collector",
   "networkMode": "host",
-  "requiresCompatibilities": ["EC2"],
+  "requiresCompatibilities": [
+    "EC2"
+  ],
   "containerDefinitions": [
     {
       "name": "zharp-collector",
       "image": "ghcr.io/zharp-io/agent:latest",
       "essential": true,
+      "user": "0:0",
       "portMappings": [
-        { "containerPort": 4317, "hostPort": 4317, "protocol": "tcp" },
-        { "containerPort": 4318, "hostPort": 4318, "protocol": "tcp" },
-        { "containerPort": 13133, "hostPort": 13133, "protocol": "tcp" }
+        {
+          "containerPort": 4317,
+          "hostPort": 4317,
+          "protocol": "tcp"
+        },
+        {
+          "containerPort": 4318,
+          "hostPort": 4318,
+          "protocol": "tcp"
+        },
+        {
+          "containerPort": 13133,
+          "hostPort": 13133,
+          "protocol": "tcp"
+        }
       ],
       "secrets": [
         {
@@ -55,10 +53,19 @@
           "sourceVolume": "collector-config",
           "containerPath": "/etc/zharp-collector",
           "readOnly": true
+        },
+        {
+          "sourceVolume": "collector-state",
+          "containerPath": "/var/lib/zharp-collector",
+          "readOnly": false
         }
       ],
       "healthCheck": {
-        "command": ["CMD-SHELL", "wget -qO- http://localhost:13133 || exit 1"],
+        "command": [
+          "CMD",
+          "/zharp-collector",
+          "health"
+        ],
         "interval": 30,
         "timeout": 5,
         "retries": 3,
@@ -82,19 +89,33 @@
   "volumes": [
     {
       "name": "docker-containers",
-      "host": { "sourcePath": "/var/lib/docker/containers" }
+      "host": {
+        "sourcePath": "/var/lib/docker/containers"
+      }
     },
     {
       "name": "docker-sock",
-      "host": { "sourcePath": "/var/run/docker.sock" }
+      "host": {
+        "sourcePath": "/var/run/docker.sock"
+      }
     },
     {
       "name": "hostfs",
-      "host": { "sourcePath": "/" }
+      "host": {
+        "sourcePath": "/"
+      }
     },
     {
       "name": "collector-config",
-      "host": { "sourcePath": "/etc/zharp-collector" }
+      "host": {
+        "sourcePath": "/etc/zharp-collector"
+      }
+    },
+    {
+      "name": "collector-state",
+      "host": {
+        "sourcePath": "/var/lib/zharp-collector"
+      }
     }
   ]
 }

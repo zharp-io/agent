@@ -1,10 +1,12 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# zharp-agent.yaml is rendered from the Helm chart (deploy/kubernetes/render.sh).
+# Create the API key Secret first:
+#   kubectl -n zharp-system create secret generic zharp-agent --from-literal=api-key=YOUR_API_KEY
+# Then: kubectl apply -k deploy/kubernetes
 namespace: zharp-system
 
 resources:
   - namespace.yaml
-  - rbac.yaml
-  - configmap.yaml
-  - daemonset.yaml
+  - zharp-agent.yaml

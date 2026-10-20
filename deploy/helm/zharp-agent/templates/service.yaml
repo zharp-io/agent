@@ -1,0 +1,25 @@
+{{- if and .Values.traces.enabled .Values.otlp.service.enabled }}
+# OTLP for the cluster's applications. internalTrafficPolicy Local sends each pod's data to the
+# agent on its own node, which tags it with that pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "zharp-agent.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "zharp-agent.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  internalTrafficPolicy: Local
+  selector:
+    {{- include "zharp-agent.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+      protocol: TCP
+{{- end }}

@@ -28,7 +28,11 @@ func cliInstall() {
 	endpointFlag := fs.String("endpoint", "", "Zharp API URL, for self-hosted installs (or ZHARP_ENDPOINT)")
 	yes := fs.Bool("yes", false, "set up everything that needs no password, without asking")
 	fs.BoolVar(yes, "y", false, "shorthand for --yes")
+	noAppLogsFlag := fs.Bool("no-app-logs", false, "don't collect application logs (Docker containers, systemd services, PM2) (or ZHARP_NO_APP_LOGS=1)")
+	installRuleFlags(fs)
 	_ = fs.Parse(os.Args[2:])
+	applyRuleEnv()
+	noAppLogs := appLogsDisabled(*noAppLogsFlag)
 
 	presetKey := firstNonEmpty(*keyFlag, os.Getenv("ZHARP_API_KEY"))
 	endpoint := strings.TrimRight(firstNonEmpty(*endpointFlag, os.Getenv("ZHARP_ENDPOINT")), "/")
@@ -42,7 +46,7 @@ func cliInstall() {
 	}
 
 	if presetKey != "" && (*yes || !isTerminal(os.Stdin)) {
-		installUnattended(presetKey, endpoint)
+		installUnattended(presetKey, endpoint, noAppLogs)
 		return
 	}
 
@@ -52,6 +56,9 @@ func cliInstall() {
 	// Step 2: Scan.
 	uiSection("1 · Scanning this server...")
 	detected := detectServices()
+	if noAppLogs {
+		detected = withoutAppLogs(detected)
+	}
 	if len(detected) > 0 {
 		uiOK("Detected:")
 		for _, s := range detected {
@@ -80,7 +87,12 @@ func cliInstall() {
 	fmt.Println()
 
 	options := allOptions(detected)
+	if noAppLogs {
+		options = withoutAppLogs(options)
+	}
 	doneTypes := map[string]bool{}
+	var logReceivers []LogReceiver
+	journal := false
 
 	metricsReceivers := []string{"hostmetrics"}
 	var receiverBlocks []string
@@ -192,6 +204,25 @@ func cliInstall() {
 			continue
 		}
 
+		if isAppLogType(selected.Type) {
+			doneTypes[selected.Type] = true
+			r, items, ok := configureAppLogs(selected.Type)
+			if ok {
+				logReceivers = append(logReceivers, r)
+				journal = journal || selected.Type == "journald"
+				hasDocker = hasDocker || selected.Type == "docker_logs"
+			}
+			configured = append(configured, items...)
+
+			fmt.Println()
+			more := strings.TrimSpace(uiAsk("Monitor another service? [Y/n]:"))
+			if strings.EqualFold(more, "n") {
+				break
+			}
+			fmt.Println()
+			continue
+		}
+
 		receiver, block, sources, ev, isDocker := configureService(selected.Type)
 		doneTypes[selected.Type] = true
 		if receiver != "" || len(sources) > 0 {
@@ -232,14 +263,21 @@ func cliInstall() {
 		}
 	}
 
-	finishInstall(buildConfigYAML(metricsReceivers, receiverBlocks, logSources, tracing, endpoint), allEnvVars, hasDocker, inventory, true)
+	if journal {
+		// The journal already carries what /var/log/syslog does; see syslogFilesCoveredByJournal.
+		logSources = withoutJournalOverlap(logSources)
+	}
+	finishInstall(buildConfig(configSpec{
+		metricsReceivers: metricsReceivers, receiverBlocks: receiverBlocks, logSources: logSources,
+		logReceivers: logReceivers, tracing: tracing, endpoint: endpoint,
+	}), allEnvVars, hasDocker, inventory, true)
 }
 
 // installUnattended is the no-questions install: detect, set up what needs no password, start.
-func installUnattended(apiKey, endpoint string) {
+func installUnattended(apiKey, endpoint string, noAppLogs bool) {
 	fmt.Println()
 	uiInfo("Scanning this server...")
-	plan := planAutomatic(detectServices())
+	plan := planAutomaticWith(detectServices(), !noAppLogs)
 	plan.envVars["ZHARP_API_KEY"] = apiKey
 
 	for _, item := range plan.inventory {
@@ -250,7 +288,14 @@ func installUnattended(apiKey, endpoint string) {
 		}
 	}
 
-	finishInstall(buildConfigYAML(plan.metricsReceivers, plan.receiverBlocks, plan.logSources, plan.tracing, endpoint), plan.envVars, plan.hasDocker, plan.inventory, false)
+	if noAppLogs {
+		uiDimMsg("Application logs (Docker containers, systemd services, PM2) left out: --no-app-logs")
+	}
+
+	finishInstall(buildConfig(configSpec{
+		metricsReceivers: plan.metricsReceivers, receiverBlocks: plan.receiverBlocks, logSources: plan.logSources,
+		logReceivers: plan.logReceivers, tracing: plan.tracing, endpoint: endpoint,
+	}), plan.envVars, plan.hasDocker, plan.inventory, false)
 }
 
 // finishInstall writes the config, secrets and inventory, then installs and starts the service.
@@ -289,6 +334,13 @@ func finishInstall(yaml string, envVars map[string]string, hasDocker bool, inven
 
 	if err := writeInventory(inventory); err != nil {
 		uiWarn("Could not write the inventory: " + err.Error())
+	}
+
+	// Journal cursor, file offsets and container log positions live here, owned by the service.
+	if strings.Contains(yaml, "\n  docker_logs:") || strings.Contains(yaml, "\n  "+storageExtension+":") {
+		if err := prepareStateDir(); err != nil {
+			uiWarn("Could not create " + installStateDir() + ": " + err.Error())
+		}
 	}
 
 	// Step 6: Install service.

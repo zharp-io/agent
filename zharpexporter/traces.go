@@ -29,6 +29,8 @@ type spanRecord struct {
 	Name          string         `json:"name"`
 	Kind          string         `json:"kind"`
 	ServiceName   string         `json:"serviceName"`
+	Env           string         `json:"env,omitempty"`
+	ServiceVer    string         `json:"serviceVersion,omitempty"`
 	StartTime     string         `json:"startTime"`
 	EndTime       string         `json:"endTime"`
 	StatusCode    string         `json:"statusCode"`
@@ -145,15 +147,24 @@ func convertTraces(td ptrace.Traces) []spanRecord {
 
 		// service.name is the axis everything in the product groups by, so it is lifted out
 		// of the resource bag and sent as its own field.
-		serviceName := "unknown"
-		if v, ok := rs.Resource().Attributes().Get("service.name"); ok {
-			serviceName = v.AsString()
-		}
+		resTags := resolveTags(rs.Resource().Attributes(), pcommon.NewMap())
 
 		for j := 0; j < rs.ScopeSpans().Len(); j++ {
 			ss := rs.ScopeSpans().At(j)
 			for k := 0; k < ss.Spans().Len(); k++ {
-				records = append(records, convertSpan(ss.Spans().At(k), serviceName, resource))
+				span := ss.Spans().At(k)
+				tags := resTags
+				if tags.Service == "" || tags.Env == "" || tags.Version == "" {
+					tags = resolveTags(rs.Resource().Attributes(), span.Attributes())
+				}
+				serviceName := tags.Service
+				if serviceName == "" {
+					serviceName = "unknown"
+				}
+				record := convertSpan(span, serviceName, resource)
+				record.Env = tags.Env
+				record.ServiceVer = tags.Version
+				records = append(records, record)
 			}
 		}
 	}

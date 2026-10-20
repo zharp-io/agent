@@ -19,6 +19,8 @@ version: "3.9"
 services:
   collector:
     image: ghcr.io/zharp-io/agent:latest
+    # The Docker socket is root-only.
+    user: "0:0"
     deploy:
       mode: global          # exactly one container per node
       restart_policy:
@@ -41,6 +43,7 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /:/hostfs:ro
+      - zharp-state:/var/lib/zharp-collector
     ports:
       # host mode: port binds on the node directly, not load-balanced across nodes
       # apps on the same node use localhost:4317 to send OTLP
@@ -53,6 +56,9 @@ services:
       - target: 13133
         published: 13133
         mode: host
+
+volumes:
+  zharp-state:
 
 configs:
   zharp_collector_config:

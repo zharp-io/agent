@@ -16,6 +16,8 @@ services:
     image: ghcr.io/zharp-io/agent:latest
     container_name: zharp-collector
     restart: unless-stopped
+    # The Docker socket is root-only.
+    user: "0:0"
     environment:
       ZHARP_API_KEY: ${ZHARP_API_KEY}
     volumes:
@@ -23,6 +25,8 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /:/hostfs:ro
+      # Where each container's log was read up to, across restarts.
+      - zharp-state:/var/lib/zharp-collector
     ports:
       - "4317:4317"    # OTLP gRPC  — apps → collector
       - "4318:4318"    # OTLP HTTP  — apps → collector
@@ -35,3 +39,6 @@ services:
     # Give the collector access to read host /proc via /hostfs
     # (required by hostmetricsreceiver on Linux)
     pid: host
+
+volumes:
+  zharp-state:

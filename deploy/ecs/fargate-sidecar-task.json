@@ -1,0 +1,93 @@
+{
+  "family": "checkout",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "runtimePlatform": { "operatingSystemFamily": "LINUX", "cpuArchitecture": "X86_64" },
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/checkout-task-role",
+  "containerDefinitions": [
+    {
+      "name": "app",
+      "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/checkout:2.4.1",
+      "essential": true,
+      "portMappings": [{ "containerPort": 8080, "protocol": "tcp" }],
+      "environment": [
+        { "name": "OTEL_EXPORTER_OTLP_ENDPOINT", "value": "http://localhost:4318" },
+        { "name": "OTEL_EXPORTER_OTLP_PROTOCOL", "value": "http/protobuf" },
+        { "name": "OTEL_SERVICE_NAME", "value": "checkout" },
+        { "name": "OTEL_RESOURCE_ATTRIBUTES", "value": "deployment.environment.name=production,service.version=2.4.1" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awsfirelens",
+        "options": {
+          "Name": "forward",
+          "Host": "127.0.0.1",
+          "Port": "24224"
+        }
+      },
+      "dependsOn": [
+        { "containerName": "zharp-agent", "condition": "HEALTHY" },
+        { "containerName": "log_router", "condition": "START" }
+      ]
+    },
+    {
+      "name": "log_router",
+      "image": "public.ecr.aws/aws-observability/aws-for-fluent-bit:stable",
+      "essential": true,
+      "firelensConfiguration": {
+        "type": "fluentbit",
+        "options": { "enable-ecs-log-metadata": "true" }
+      },
+      "memoryReservation": 50,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/checkout/firelens",
+          "awslogs-region": "REGION",
+          "awslogs-stream-prefix": "log_router",
+          "awslogs-create-group": "true"
+        }
+      },
+      "dependsOn": [{ "containerName": "zharp-agent", "condition": "START" }]
+    },
+    {
+      "name": "zharp-agent",
+      "image": "ghcr.io/zharp-io/agent:latest",
+      "essential": false,
+      "environment": [
+        { "name": "ZHARP_MODE", "value": "sidecar" },
+        { "name": "ZHARP_SERVICE", "value": "checkout" },
+        { "name": "ZHARP_ENV", "value": "production" },
+        { "name": "ZHARP_VERSION", "value": "2.4.1" }
+      ],
+      "secrets": [
+        {
+          "name": "ZHARP_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:zharp/api-key"
+        }
+      ],
+      "healthCheck": {
+        "command": ["CMD", "/zharp-collector", "health"],
+        "interval": 10,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 10
+      },
+      "stopTimeout": 20,
+      "cpu": 128,
+      "memory": 256,
+      "memoryReservation": 128,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/checkout/zharp-agent",
+          "awslogs-region": "REGION",
+          "awslogs-stream-prefix": "zharp",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}

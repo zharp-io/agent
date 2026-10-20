@@ -1,0 +1,160 @@
+{{- if and (not .Values.apiKey) (not .Values.existingSecret) }}
+{{- fail "Set apiKey, or existingSecret naming a Secret that holds the API key." }}
+{{- end }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "zharp-agent.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "zharp-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "zharp-agent.selectorLabels" . | nindent 6 }}
+  updateStrategy:
+    {{- toYaml .Values.updateStrategy | nindent 4 }}
+  template:
+    metadata:
+      labels:
+        {{- include "zharp-agent.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # Restart the agents when their config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # The agent's own logs are never collected (also excluded by path in the config).
+        zharp.io/logs: "false"
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "zharp-agent.serviceAccountName" . }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --config=/etc/zharp-agent/config.yaml
+          env:
+            - name: ZHARP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "zharp-agent.secretName" . }}
+                  key: {{ .Values.existingSecretKey }}
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: K8S_NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # host.name is the node, and the cluster name goes on everything sent.
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "host.name=$(K8S_NODE_NAME){{ with .Values.clusterName }},k8s.cluster.name={{ . }}{{ end }}"
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: health
+              containerPort: 13133
+              protocol: TCP
+            {{- if .Values.traces.enabled }}
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+              {{- if .Values.otlp.hostPort.enabled }}
+              hostPort: 4317
+              {{- end }}
+            - name: otlp-http
+              containerPort: 4318
+              protocol: TCP
+              {{- if .Values.otlp.hostPort.enabled }}
+              hostPort: 4318
+              {{- end }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/zharp-agent
+              readOnly: true
+            - name: state
+              mountPath: /var/lib/zharp-agent
+            {{- if .Values.logs.enabled }}
+            - name: varlogpods
+              mountPath: /var/log/pods
+              readOnly: true
+            # On Docker-runtime nodes the files under /var/log/pods link here.
+            - name: varlibdockercontainers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.metrics.enabled .Values.metrics.host }}
+            - name: hostfs
+              mountPath: /hostfs
+              readOnly: true
+              mountPropagation: HostToContainer
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "zharp-agent.fullname" . }}
+        - name: state
+          hostPath:
+            path: {{ .Values.logs.stateDir }}
+            type: DirectoryOrCreate
+        {{- if .Values.logs.enabled }}
+        - name: varlogpods
+          hostPath:
+            path: /var/log/pods
+        - name: varlibdockercontainers
+          hostPath:
+            path: /var/lib/docker/containers
+        {{- end }}
+        {{- if and .Values.metrics.enabled .Values.metrics.host }}
+        - name: hostfs
+          hostPath:
+            path: /
+        {{- end }}

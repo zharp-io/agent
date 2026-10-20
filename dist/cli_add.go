@@ -43,6 +43,15 @@ func cliAdd() {
 		os.Exit(1)
 	}
 
+	if isAppLogType(svcType) {
+		cliAddAppLogs(svcType, configFile)
+		return
+	}
+	if svcType == "rule" {
+		cliAddRule(configFile, os.Args[3:])
+		return
+	}
+
 	args := os.Args[3:]
 	receiver, block, logSources, envVars, err := parseAddArgs(svcType, args)
 	if err != nil {
@@ -273,14 +282,16 @@ func parseAddArgs(svcType string, args []string) (receiver, block string, logSou
 			err = e
 			return
 		}
-		var paths []string
-		for _, p := range []string{"/var/log/syslog", "/var/log/messages", "/var/log/auth.log"} {
-			if fileExists(p) {
-				paths = append(paths, p)
-			}
-		}
+		// With the journal already read, only what it leaves out (login and kernel lines).
+		cfg, _ := os.ReadFile(installConfigFile())
+		journal := strings.Contains(string(cfg), "\n  journald:")
+		paths := syslogPaths(journal)
 		if len(paths) == 0 {
-			err = fmt.Errorf("no syslog files found (/var/log/syslog, /var/log/messages)")
+			if journal {
+				err = fmt.Errorf("the journal is already collected, and there is no auth.log or kern.log to add")
+			} else {
+				err = fmt.Errorf("no syslog files found (/var/log/syslog, /var/log/messages)")
+			}
 			return
 		}
 		logSources = []LogSource{{Name: sanitizeServiceName(*svcName), Paths: paths}}
@@ -586,7 +597,7 @@ func addLogSourcesToConfig(configFile string, sources []LogSource) error {
 		}
 	}
 
-	return os.WriteFile(configFile, []byte(content), 0o644)
+	return os.WriteFile(configFile, []byte(ensureLogRules(content)), 0o644)
 }
 
 // appendEnvVars adds or updates KEY=VALUE pairs in the env file.
@@ -623,6 +634,12 @@ func normalizeAddArg(arg string) string {
 		return "mongo"
 	case "docker":
 		return "docker"
+	case "docker-logs", "docker_logs", "container-logs", "containers":
+		return "docker_logs"
+	case "journal", "journald", "systemd":
+		return "journald"
+	case "pm2":
+		return "pm2"
 	case "logs", "log", "custom", "custom_log":
 		return "custom_log"
 	case "nginx":
@@ -633,6 +650,8 @@ func normalizeAddArg(arg string) string {
 		return "syslog"
 	case "iis":
 		return "iis_log"
+	case "rule", "rules":
+		return "rule"
 	}
 	return ""
 }
@@ -647,11 +666,15 @@ func printAddUsage() {
 	fmt.Println("    redis     --endpoint HOST:PORT [--password PASS] [--name NAME]")
 	fmt.Println("    mongo     --endpoint HOST:PORT --user USER --password PASS [--name NAME]")
 	fmt.Println("    docker")
+	fmt.Println("    docker-logs   every container's output (opt one out with the label zharp.logs=false)")
+	fmt.Println("    journal       systemd services from the journal (Linux)")
+	fmt.Println("    pm2           apps run by PM2 (Linux)")
 	fmt.Println("    nginx     [--service NAME] [--access-log PATH] [--error-log PATH]")
 	fmt.Println("    apache    [--service NAME] [--access-log PATH]")
 	fmt.Println("    syslog    [--service NAME]")
 	fmt.Println("    iis       [--service NAME] [--log-folder PATH]")
 	fmt.Println("    logs      --path PATH [--path PATH ...] [--service NAME]")
+	fmt.Println("    rule      exclude --pattern RE | mask --pattern RE [--replace S] | default-masks --off|--on")
 	fmt.Println()
 	fmt.Println("  Service name:")
 	fmt.Println("    --service sets the name shown in the Zharp dashboard.")
@@ -666,6 +689,7 @@ func printAddUsage() {
 	fmt.Println(`    sudo zharp-collector add postgres --host localhost --user zharp_monitor --password secret --db myapp`)
 	fmt.Println(`    sudo zharp-collector add postgres --name orders --host 10.0.0.12 --user zharp_monitor --password secret --db orders`)
 	fmt.Println(`    sudo zharp-collector add docker`)
+	fmt.Println(`    sudo zharp-collector add docker-logs`)
 	fmt.Println(`    sudo zharp-collector add logs --path /var/log/myapp/app.log --service myapp`)
 	fmt.Println(`    sudo zharp-collector add nginx --service frontend`)
 	fmt.Println()

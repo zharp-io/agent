@@ -1,0 +1,105 @@
+# Zharp agent as a Cloud Run sidecar.
+#
+#   1. Cloud Run pulls only from Artifact Registry (or Docker Hub), so mirror the agent image
+#      once through an Artifact Registry remote repository for ghcr.io:
+#        gcloud artifacts repositories create ghcr --repository-format=docker \
+#          --location=REGION --mode=remote-repository --remote-docker-repo=https://ghcr.io
+#      The image is then REGION-docker.pkg.dev/PROJECT_ID/ghcr/zharp-io/agent:latest
+#   2. Put the API key in Secret Manager and let the service account read it:
+#        printf '%s' 'your_api_key' | gcloud secrets create zharp-api-key --data-file=-
+#        gcloud secrets add-iam-policy-binding zharp-api-key \
+#          --member=serviceAccount:SERVICE_ACCOUNT --role=roles/secretmanager.secretAccessor
+#   3. gcloud run services replace service.yaml --region=REGION
+#
+# Logs: Cloud Run sends every container's stdout to Cloud Logging, and a sidecar cannot read
+# another container's stdout. Either export logs from the app's OpenTelemetry SDK over OTLP
+# (as traces and metrics are), or have the app also write its log to the shared in-memory
+# volume below, which the agent tails (ZHARP_LOGS_PATH). stdout keeps going to Cloud Logging.
+# The volume lives in the instance's memory: keep the file small (rotate or truncate it).
+#
+# Shutdown: Cloud Run sends SIGTERM and allows 10 seconds; the agent flushes what it holds
+# (batches wait at most 2s) and exits.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: checkout
+spec:
+  template:
+    metadata:
+      annotations:
+        # The agent starts (and passes its startup probe) before the app.
+        run.googleapis.com/container-dependencies: '{"app":["zharp-agent"]}'
+        # Instance-based billing: with request-based billing the CPU is throttled between
+        # requests and the agent can't export until the next request arrives.
+        run.googleapis.com/cpu-throttling: "false"
+    spec:
+      serviceAccountName: SERVICE_ACCOUNT
+      timeoutSeconds: 300
+      containers:
+        - name: app
+          image: REGION-docker.pkg.dev/PROJECT_ID/apps/checkout:2.4.1
+          ports:
+            - containerPort: 8080
+          env:
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://localhost:4318
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            - name: OTEL_SERVICE_NAME
+              value: checkout
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: deployment.environment.name=production,service.version=2.4.1
+            # Optional: where the app writes a copy of its log for the agent to tail.
+            - name: LOG_FILE
+              value: /var/log/app/app.log
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: app-logs
+              mountPath: /var/log/app
+        - name: zharp-agent
+          image: REGION-docker.pkg.dev/PROJECT_ID/ghcr/zharp-io/agent:latest
+          env:
+            - name: ZHARP_MODE
+              value: sidecar
+            - name: ZHARP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: zharp-api-key
+                  key: latest
+            - name: ZHARP_SERVICE
+              value: checkout
+            - name: ZHARP_ENV
+              value: production
+            - name: ZHARP_VERSION
+              value: 2.4.1
+            - name: ZHARP_LOGS_PATH
+              value: /var/log/app/*.log
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          startupProbe:
+            httpGet:
+              path: /
+              port: 13133
+            periodSeconds: 2
+            failureThreshold: 15
+            timeoutSeconds: 1
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 3
+          volumeMounts:
+            - name: app-logs
+              mountPath: /var/log/app
+      volumes:
+        - name: app-logs
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

@@ -1,0 +1,87 @@
+# Zharp agent as an Azure Container Apps sidecar.
+#
+#   az containerapp create --name checkout --resource-group RESOURCE_GROUP --yaml app.yaml
+#   (or `az containerapp update ... --yaml app.yaml` for an existing app)
+#
+# The API key is a Container Apps secret; to keep it in Key Vault instead, replace `value`
+# with `keyVaultUrl: https://VAULT.vault.azure.net/secrets/zharp-api-key` and
+# `identity: system` (the app's identity needs the Key Vault Secrets User role).
+#
+# Logs: Container Apps sends stdout to Log Analytics, and a sidecar cannot read another
+# container's stdout. Export logs from the app's OpenTelemetry SDK over OTLP, or have the
+# app also write its log to the shared EmptyDir volume below, which the agent tails.
+location: REGION
+properties:
+  managedEnvironmentId: /subscriptions/SUBSCRIPTION_ID/resourceGroups/RESOURCE_GROUP/providers/Microsoft.App/managedEnvironments/ENVIRONMENT
+  configuration:
+    activeRevisionsMode: Single
+    ingress:
+      external: true
+      targetPort: 8080
+      transport: auto
+    secrets:
+      - name: zharp-api-key
+        value: your_api_key
+  template:
+    # SIGTERM to SIGKILL; the agent flushes what it holds when a replica stops.
+    terminationGracePeriodSeconds: 30
+    containers:
+      - name: app
+        image: REGISTRY.azurecr.io/checkout:2.4.1
+        env:
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://localhost:4318
+          - name: OTEL_EXPORTER_OTLP_PROTOCOL
+            value: http/protobuf
+          - name: OTEL_SERVICE_NAME
+            value: checkout
+          - name: OTEL_RESOURCE_ATTRIBUTES
+            value: deployment.environment.name=production,service.version=2.4.1
+          - name: LOG_FILE
+            value: /var/log/app/app.log
+        resources:
+          cpu: 0.5
+          memory: 1Gi
+        volumeMounts:
+          - volumeName: app-logs
+            mountPath: /var/log/app
+      - name: zharp-agent
+        image: ghcr.io/zharp-io/agent:latest
+        env:
+          - name: ZHARP_MODE
+            value: sidecar
+          - name: ZHARP_API_KEY
+            secretRef: zharp-api-key
+          - name: ZHARP_SERVICE
+            value: checkout
+          - name: ZHARP_ENV
+            value: production
+          - name: ZHARP_VERSION
+            value: 2.4.1
+          - name: ZHARP_LOGS_PATH
+            value: /var/log/app/*.log
+        resources:
+          cpu: 0.25
+          memory: 0.5Gi
+        probes:
+          - type: Startup
+            httpGet:
+              path: /
+              port: 13133
+            periodSeconds: 2
+            failureThreshold: 15
+          - type: Liveness
+            httpGet:
+              path: /
+              port: 13133
+            periodSeconds: 30
+            failureThreshold: 3
+        volumeMounts:
+          - volumeName: app-logs
+            mountPath: /var/log/app
+    scale:
+      minReplicas: 1
+      maxReplicas: 10
+    volumes:
+      - name: app-logs
+        storageType: EmptyDir

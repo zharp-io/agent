@@ -1,0 +1,186 @@
+{{- $fullname := include "zharp-agent.fullname" . -}}
+{{- $metrics := and .Values.metrics.enabled (or .Values.metrics.kubelet .Values.metrics.host) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "zharp-agent.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      # Remembers how far each log file was read, across restarts.
+      file_storage:
+        directory: /var/lib/zharp-agent/storage
+        create_directory: true
+
+    receivers:
+      {{- if .Values.logs.enabled }}
+      # Every container's stdout and stderr on this node.
+      filelog:
+        include:
+          - /var/log/pods/*/*/*.log
+        exclude:
+          # The agent's own output.
+          - /var/log/pods/{{ .Release.Namespace }}_{{ $fullname }}-*_*/*/*.log
+          {{- range .Values.logs.excludeNamespaces }}
+          - /var/log/pods/{{ . }}_*/*/*.log
+          {{- end }}
+        start_at: end
+        include_file_path: true
+        include_file_name: false
+        storage: file_storage
+        retry_on_failure:
+          enabled: true
+        operators:
+          # containerd/CRI-O ("<time> stdout F <line>") and Docker JSON lines; joins lines the
+          # runtime split, and names the pod, namespace and container from the file path.
+          - type: container
+            id: container-parser
+            add_metadata_from_filepath: true
+      {{- end }}
+      {{- if and .Values.metrics.enabled .Values.metrics.kubelet }}
+      kubeletstats:
+        collection_interval: {{ .Values.metrics.collectionInterval }}
+        auth_type: serviceAccount
+        endpoint: https://${env:K8S_NODE_IP}:10250
+        insecure_skip_verify: {{ .Values.metrics.kubeletInsecureSkipVerify }}
+        metric_groups: [node, pod, container]
+      {{- end }}
+      {{- if and .Values.metrics.enabled .Values.metrics.host }}
+      hostmetrics:
+        root_path: /hostfs
+        collection_interval: {{ .Values.metrics.collectionInterval }}
+        scrapers:
+          cpu:
+          memory:
+          load:
+          network:
+          disk:
+          filesystem:
+            exclude_mount_points:
+              mount_points: ['^/(dev|proc|sys|run|snap|var/lib/(kubelet|containerd|docker))(/|\z)']
+              match_type: regexp
+      {{- end }}
+      {{- if .Values.traces.enabled }}
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      {{- end }}
+
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+      # Pod, namespace, node and workload names, and the zharp.io/* annotations and
+      # app.kubernetes.io labels the zharp_logs processor reads.
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        filter:
+          node_from_env_var: K8S_NODE_NAME
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.node.name
+            - k8s.deployment.name
+            - k8s.statefulset.name
+            - k8s.daemonset.name
+            - k8s.replicaset.name
+            - k8s.cronjob.name
+            - k8s.job.name
+            - k8s.container.name
+            - container.image.name
+            - container.image.tag
+          annotations:
+            - key_regex: zharp\.io/.*
+              from: pod
+          labels:
+            - key: app.kubernetes.io/name
+              from: pod
+            - key: app.kubernetes.io/version
+              from: pod
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.ip
+          - sources:
+              - from: connection
+      # Service, environment, version and source from the zharp.io/* annotations; opt-out;
+      # multi-line joining; exclude and mask rules (the pod's, then these); built-in masks.
+      zharp_logs:
+        default_masks: {{ .Values.rules.defaultMasks }}
+        {{- with .Values.rules.disableDefaultMasks }}
+        disable_default_masks: [{{ join ", " . }}]
+        {{- end }}
+        {{- with .Values.environment }}
+        environment: {{ include "zharp-agent.configString" . }}
+        {{- end }}
+        kubernetes:
+          enabled: true
+          multiline: {{ include "zharp-agent.configString" .Values.logs.multiline }}
+        {{- if or .Values.rules.exclude .Values.rules.mask }}
+        rules:
+          {{- range .Values.rules.exclude }}
+          - type: exclude
+            pattern: {{ include "zharp-agent.configString" . }}
+          {{- end }}
+          {{- range .Values.rules.mask }}
+          - type: mask
+            pattern: {{ include "zharp-agent.configString" .pattern }}
+            {{- with .replace }}
+            replace: {{ include "zharp-agent.configString" . }}
+            {{- end }}
+          {{- end }}
+        {{- else }}
+        rules: []
+        {{- end }}
+      # host.name (the node) and k8s.cluster.name, from OTEL_RESOURCE_ATTRIBUTES.
+      resourcedetection:
+        detectors: [env]
+        timeout: 5s
+        override: false
+      batch:
+        send_batch_size: 1000
+        timeout: 5s
+
+    exporters:
+      zharp:
+        api_key: ${env:ZHARP_API_KEY}
+        {{- with .Values.endpoint }}
+        endpoint: {{ . | quote }}
+        {{- end }}
+
+    service:
+      extensions: [health_check, file_storage]
+      pipelines:
+        {{- if or .Values.logs.enabled .Values.traces.enabled }}
+        logs:
+          receivers: [{{ if .Values.logs.enabled }}filelog{{ end }}{{ if and .Values.logs.enabled .Values.traces.enabled }}, {{ end }}{{ if .Values.traces.enabled }}otlp{{ end }}]
+          processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection, batch]
+          exporters: [zharp]
+        {{- end }}
+        {{- if or $metrics .Values.traces.enabled }}
+        metrics:
+          receivers: [{{ $r := list }}{{ if and .Values.metrics.enabled .Values.metrics.kubelet }}{{ $r = append $r "kubeletstats" }}{{ end }}{{ if and .Values.metrics.enabled .Values.metrics.host }}{{ $r = append $r "hostmetrics" }}{{ end }}{{ if .Values.traces.enabled }}{{ $r = append $r "otlp" }}{{ end }}{{ join ", " $r }}]
+          processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection, batch]
+          exporters: [zharp]
+        {{- end }}
+        {{- if .Values.traces.enabled }}
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, zharp_logs, batch]
+          exporters: [zharp]
+        {{- end }}

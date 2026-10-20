@@ -11,11 +11,13 @@ INSTALL_DIR="/usr/local/bin"
 
 API_KEY="${ZHARP_API_KEY:-}"
 ENDPOINT="${ZHARP_ENDPOINT:-}"
+NO_APP_LOGS="${ZHARP_NO_APP_LOGS:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --api-key|--token) API_KEY="$2"; shift 2 ;;
     --endpoint|--server) ENDPOINT="$2"; shift 2 ;;
     --version) ZHARP_VERSION="$2"; shift 2 ;;
+    --no-app-logs) NO_APP_LOGS=1; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -80,6 +82,7 @@ if [[ -n "$API_KEY" ]]; then
   fi
   ARGS=(install --yes --api-key "$API_KEY")
   [[ -n "$ENDPOINT" ]] && ARGS+=(--endpoint "$ENDPOINT")
+  case "$NO_APP_LOGS" in 1|true|yes|on) ARGS+=(--no-app-logs) ;; esac
   exec "$INSTALL_DIR/zharp-collector" "${ARGS[@]}"
 fi
 
