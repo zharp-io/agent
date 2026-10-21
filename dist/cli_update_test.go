@@ -326,6 +326,58 @@ func TestMergeAddsTracingAndLogsPipelineToOldConfig(t *testing.T) {
 	validateMerged(t, res.config)
 }
 
+// An install from before v1.6 has no inventory and no inventory_file: the update lists what the
+// config already collects and points the exporter at the inventory, so the host page shows it.
+func TestMergeBackfillsInventoryForPreV16Install(t *testing.T) {
+	fakeHost(t)
+	before := buildConfig(configSpec{metricsReceivers: []string{"hostmetrics"}, tracing: true,
+		logSources: []LogSource{{Name: "syslog", Paths: []string{"/var/log/syslog"}}, {Name: "myapp", Paths: []string{"/srv/myapp/*.log"}}}})
+	lines := strings.Split(before, "\n")
+	kept := lines[:0]
+	for _, l := range lines {
+		if !strings.Contains(l, "inventory_file:") {
+			kept = append(kept, l)
+		}
+	}
+	before = strings.Join(kept, "\n")
+	before, err := addReceiverToContent(before, "postgresql/orders", strings.Replace(pgBlock, "  postgresql:", "  postgresql/orders:", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := mergeSources(before, nil, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.config, "\nexporters:\n  zharp:\n    inventory_file: ") {
+		t.Errorf("inventory_file not added under the zharp exporter:\n%s", section(res.config, "exporters", "service"))
+	}
+	types := map[string]InventoryItem{}
+	for _, it := range res.inventory {
+		types[it.Type] = it
+	}
+	for _, want := range []string{"host", "apm", "pg:orders", "syslog", "log:myapp"} {
+		if it, ok := types[want]; !ok || it.Status != invCollecting {
+			t.Errorf("inventory is missing %q as collecting: %+v", want, res.inventory)
+		}
+	}
+	if got := types["pg:orders"].Label; got != "PostgreSQL (orders)" {
+		t.Errorf("label %q", got)
+	}
+	if len(res.added) != 0 {
+		t.Errorf("already-collected sources reported as added: %+v", res.added)
+	}
+	validateMerged(t, res.config)
+
+	again, err := mergeSources(res.config, res.inventory, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.config != res.config || len(again.inventory) != len(res.inventory) {
+		t.Error("a second run changed something")
+	}
+}
+
 func writeInstall(t *testing.T) updatePaths {
 	t.Helper()
 	dir := t.TempDir()

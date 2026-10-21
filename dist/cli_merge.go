@@ -122,6 +122,9 @@ func mergeSources(content string, inventory []InventoryItem, detected []ServiceO
 	}
 	ex := existingSources(have)
 	res.unchanged = receiverLabels(have)
+	// An install from before v1.6 has no inventory: list what its config already collects, so
+	// the host page shows those sources too, not only what this update adds.
+	res.inventory = backfillInventory(res.inventory, have)
 
 	// A source the person skipped in the guided install stays skipped.
 	optedOut := map[string]bool{}
@@ -248,7 +251,67 @@ func mergeSources(content string, inventory []InventoryItem, detected []ServiceO
 	if addedTypes["pm2"] && !pm2Setup {
 		res.inventory = withoutInventoryType(res.inventory, "pm2:setup") // everything is readable now
 	}
+	res.config = withInventoryFile(res.config)
 	return res, nil
+}
+
+// backfillInventory adds a "collecting" entry for every source the config collects that the
+// inventory doesn't list yet. Entries already there are kept as they are.
+func backfillInventory(items []InventoryItem, have []configReceiver) []InventoryItem {
+	listed := map[string]bool{}
+	for _, it := range items {
+		listed[it.Type] = true
+	}
+	add := func(it InventoryItem) {
+		if !listed[it.Type] {
+			listed[it.Type] = true
+			items = append(items, it)
+		}
+	}
+	dbTypes := map[string]string{"postgresql": "pg", "mysql": "mysql", "redis": "redis", "mongodb": "mongo"}
+	for _, r := range have {
+		base, name, _ := strings.Cut(r.ID, "/")
+		switch {
+		case base == "hostmetrics":
+			add(InventoryItem{Type: "host", Label: "Host metrics", Status: invCollecting, Detail: "CPU, memory, disk, network and load"})
+		case base == "otlp":
+			add(InventoryItem{Type: "apm", Label: "Application traces", Status: invCollecting, Detail: "OpenTelemetry on 127.0.0.1:4317 (gRPC) and :4318 (HTTP)"})
+		case dbTypes[base] != "":
+			it := inventoryFor(dbTypes[base])
+			if name != "" {
+				it.Type = it.Type + ":" + name
+				it.Label = fmt.Sprintf("%s (%s)", it.Label, name)
+			}
+			add(it)
+		case base == "docker_stats":
+			add(inventoryFor("docker"))
+		case base == "docker_logs" || base == "journald":
+			add(inventoryFor(base))
+		case base == "filelog" && name == "pm2":
+			add(inventoryFor("pm2"))
+		case base == "filelog" && logSourceTypes[name] != "":
+			add(inventoryFor(logSourceTypes[name]))
+		case base == "filelog" && name != "":
+			add(InventoryItem{Type: "log:" + name, Label: name + " logs", Status: invCollecting, Detail: strings.Join(r.Include, ", ")})
+		}
+	}
+	return items
+}
+
+// withInventoryFile points the Zharp exporter at the inventory when the config doesn't — an
+// install from before v1.6 — so the heartbeat sends it and the host page can show it. It is the
+// one line the update adds to an existing exporter.
+func withInventoryFile(content string) string {
+	if strings.Contains(content, "inventory_file:") {
+		return content
+	}
+	const exporter = "\nexporters:\n  zharp:\n"
+	i := strings.Index(content, exporter)
+	if i < 0 {
+		return content
+	}
+	at := i + len(exporter)
+	return content[:at] + fmt.Sprintf("    inventory_file: %q\n", installInventoryFile()) + content[at:]
 }
 
 // mergeInventoryItem records it, unless the same source is already collecting: a "collecting"
