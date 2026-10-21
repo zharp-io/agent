@@ -56,10 +56,15 @@ func cliAddAppLogs(svcType, configFile string) {
 // second `add pm2` picks up new directories), adds it to the logs pipeline, and turns on the
 // storage extension when r needs it.
 func addLogReceiver(content string, r LogReceiver) string {
+	return ensureLogRules(addLogReceiverContent(content, r))
+}
+
+// addLogReceiverContent is addLogReceiver without the log rules processor (see
+// addLogSourcesToContent).
+func addLogReceiverContent(content string, r LogReceiver) string {
 	content = removeReceiverBlock(content, r.ID)
 	content = strings.Replace(content, "\nprocessors:", "\n"+strings.TrimRight(r.Block, "\n")+"\n\nprocessors:", 1)
 	content = ensureInLogsPipeline(content, r.ID)
-	content = ensureLogRules(content)
 	if r.Storage {
 		content = ensureStorageExtension(content)
 	}

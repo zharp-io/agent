@@ -12,6 +12,10 @@ const (
 	invNeedsSetup = "needs_setup" // found on this host, but it needs something only a person can give (a password)
 )
 
+// skippedDuringInstall is the detail of a source the guided install found and the person chose
+// not to set up. `update` leaves those alone instead of adding them behind their back.
+const skippedDuringInstall = "Skipped during install"
+
 // InventoryItem is one thing the collector found on this host and what it is doing about it.
 // The exporter reads the file these are written to and sends it with every heartbeat, so the
 // dashboard can show what a host is collecting and what is waiting on the person who installed it.
@@ -28,7 +32,11 @@ func installInventoryFile() string {
 }
 
 func readInventory() []InventoryItem {
-	data, err := os.ReadFile(installInventoryFile())
+	return readInventoryFrom(installInventoryFile())
+}
+
+func readInventoryFrom(path string) []InventoryItem {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
@@ -40,11 +48,15 @@ func readInventory() []InventoryItem {
 }
 
 func writeInventory(items []InventoryItem) error {
+	return writeInventoryTo(installInventoryFile(), items)
+}
+
+func writeInventoryTo(path string, items []InventoryItem) error {
 	data, err := json.MarshalIndent(items, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(installInventoryFile(), data, 0o644)
+	return os.WriteFile(path, data, 0o644)
 }
 
 // markInventory records that a source is now set up — `add` calls it so a database that was

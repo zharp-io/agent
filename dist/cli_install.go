@@ -259,7 +259,7 @@ func cliInstall() {
 	inventory = append(inventory, configured...)
 	for _, d := range detected {
 		if !doneTypes[d.Type] {
-			inventory = append(inventory, InventoryItem{Type: d.Type, Label: d.Label, Status: invNeedsSetup, Detail: "Skipped during install"})
+			inventory = append(inventory, InventoryItem{Type: d.Type, Label: d.Label, Status: invNeedsSetup, Detail: skippedDuringInstall})
 		}
 	}
 
@@ -269,7 +269,7 @@ func cliInstall() {
 	}
 	finishInstall(buildConfig(configSpec{
 		metricsReceivers: metricsReceivers, receiverBlocks: receiverBlocks, logSources: logSources,
-		logReceivers: logReceivers, tracing: tracing, endpoint: endpoint,
+		logReceivers: logReceivers, tracing: tracing, endpoint: endpoint, noAppLogs: noAppLogs,
 	}), allEnvVars, hasDocker, inventory, true)
 }
 
@@ -294,7 +294,7 @@ func installUnattended(apiKey, endpoint string, noAppLogs bool) {
 
 	finishInstall(buildConfig(configSpec{
 		metricsReceivers: plan.metricsReceivers, receiverBlocks: plan.receiverBlocks, logSources: plan.logSources,
-		logReceivers: plan.logReceivers, tracing: plan.tracing, endpoint: endpoint,
+		logReceivers: plan.logReceivers, tracing: plan.tracing, endpoint: endpoint, noAppLogs: noAppLogs,
 	}), plan.envVars, plan.hasDocker, plan.inventory, false)
 }
 

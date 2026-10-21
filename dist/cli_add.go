@@ -482,13 +482,20 @@ func addReceiverToConfig(configFile, receiver, block string) error {
 	if err != nil {
 		return err
 	}
-	content := string(data)
+	content, err := addReceiverToContent(string(data), receiver, block)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(configFile, []byte(content), 0o644)
+}
 
+// addReceiverToContent is addReceiverToConfig on the config's text (`update` merges with it too).
+func addReceiverToContent(content, receiver, block string) (string, error) {
 	block = strings.TrimRight(block, "\n") + "\n"
 
 	marker := "\nprocessors:"
 	if !strings.Contains(content, marker) {
-		return fmt.Errorf("could not find processors section in config")
+		return content, fmt.Errorf("could not find processors section in config")
 	}
 	// A source can need more than one receiver (MySQL adds a query for its connection limit);
 	// they come comma-separated and share one block, so the first name decides if it's there.
@@ -527,7 +534,7 @@ func addReceiverToConfig(configFile, receiver, block string) error {
 		return sub[1] + existing + "]"
 	})
 
-	return os.WriteFile(configFile, []byte(content), 0o644)
+	return content, nil
 }
 
 // addLogSourcesToConfig adds named filelog/<name> receivers for each LogSource,
@@ -537,8 +544,13 @@ func addLogSourcesToConfig(configFile string, sources []LogSource) error {
 	if err != nil {
 		return err
 	}
-	content := string(data)
+	content := ensureLogRules(addLogSourcesToContent(string(data), sources))
+	return os.WriteFile(configFile, []byte(content), 0o644)
+}
 
+// addLogSourcesToContent is addLogSourcesToConfig on the config's text, without the log rules
+// processor: `add` puts that in afterwards, `update` only when it creates the logs pipeline.
+func addLogSourcesToContent(content string, sources []LogSource) string {
 	for _, src := range sources {
 		receiverKey := "filelog/" + src.Name
 		receiverHeader := "  " + receiverKey + ":"
@@ -597,7 +609,7 @@ func addLogSourcesToConfig(configFile string, sources []LogSource) error {
 		}
 	}
 
-	return os.WriteFile(configFile, []byte(ensureLogRules(content)), 0o644)
+	return content
 }
 
 // appendEnvVars adds or updates KEY=VALUE pairs in the env file.

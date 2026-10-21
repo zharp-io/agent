@@ -17,6 +17,7 @@ func handleSubcommand() bool {
 		return handled
 	}
 	if len(os.Args) < 2 {
+		cleanupOldBinary()
 		return false
 	}
 	switch os.Args[1] {
@@ -25,6 +26,9 @@ func handleSubcommand() bool {
 		return true
 	case "add":
 		cliAdd()
+		return true
+	case "update":
+		cliUpdate()
 		return true
 	case "start":
 		if err := svcStart(); err != nil {
@@ -63,6 +67,10 @@ func handleSubcommand() bool {
 		cliHelp()
 		return true
 	}
+	// The collector itself starts: a binary an earlier update set aside is no longer running.
+	if os.Args[1] != "validate" {
+		cleanupOldBinary()
+	}
 	return false
 }
 
@@ -74,6 +82,8 @@ func cliHelp() {
 	fmt.Println("  Subcommands:")
 	fmt.Println("    install              Guided setup — installs config and system service")
 	fmt.Println("    add <type> [flags]   Add a monitoring target to the running config")
+	fmt.Println("    update [--check]     Update to the latest release and add what it newly detects")
+	fmt.Println("                         (--version vX.Y.Z to pin one; nothing configured is removed)")
 	fmt.Println("    start                Start the system service")
 	fmt.Println("    stop                 Stop the system service")
 	fmt.Println("    restart              Restart the system service")

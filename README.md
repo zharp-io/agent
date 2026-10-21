@@ -201,6 +201,45 @@ aws ecs create-service \
 
 ---
 
+## Updating
+
+One command updates the collector and picks up whatever the new version can detect, without touching what is already set up:
+
+```bash
+sudo zharp-collector update            # Linux / macOS (from 1.8.0)
+zharp-collector update                 # Windows, in an elevated PowerShell
+```
+
+It downloads the latest release for your OS and architecture, swaps the binary in place, then has the **new** binary scan the server the way `install` does (services and databases, Docker containers, the systemd journal, PM2, nginx/Apache/syslog files) and add only what isn't configured yet:
+
+- Nothing already configured is removed or changed — receivers, processors, exporters, log rules, secrets, the API key and the endpoint stay as they are; pipelines only gain new receivers.
+- A database it finds but can't read without a password is listed as **needs setup**, with the `zharp-collector add …` command to finish it.
+- Sources you skipped in the guided install stay skipped, and `--no-app-logs` (or `ZHARP_NO_APP_LOGS=1`) keeps application logs out. Installs made with `--no-app-logs` remember it.
+- `config.yaml`, the secrets file and `inventory.json` are backed up to `<file>.bak-<timestamp>` before anything is written. The new config is validated by the collector itself; if it's rejected, the backups are put back. If the new binary can't load the existing config at all, the previous binary is put back too.
+- The service is restarted only when the binary or the config changed. At the end you get a summary: `Updated 1.7.0 → 1.8.0`, what was added, what was already there and what still needs setup.
+
+| Flag | |
+|---|---|
+| `--check` | Show the installed and latest versions and what an update would add; change nothing |
+| `--version vX.Y.Z` | Install that release instead of the latest |
+| `--no-app-logs` | Don't add Docker container, journal or PM2 logs |
+
+Already on the latest version? `update` skips the download and still adds anything newly found — run it again after starting a new service.
+
+**Servers on 1.7.0 or older** (no `update` command yet): re-run the installer. When `/etc/zharp-collector/config.yaml` exists it updates instead of installing — it replaces the binary, runs the same merge and restarts the service; no API key is needed and any `--api-key` given is not used:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zharp-io/agent/main/install.sh | sudo bash
+```
+
+On Windows, `setup.ps1` does the same when `C:\ProgramData\zharp-collector\config.yaml` exists:
+
+```powershell
+irm https://raw.githubusercontent.com/zharp-io/agent/main/setup.ps1 | iex
+```
+
+---
+
 ## Database monitoring
 
 Database receivers are configured automatically when you run `install.sh` or `setup.ps1` and select a database. To add one manually, edit `/etc/zharp-collector/config.yaml`:
