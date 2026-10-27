@@ -187,14 +187,8 @@ func (e *zharpLogsExporter) ship(ctx context.Context, batch []logEntry) error {
 		return err
 	}
 
-	resp, err := e.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("zharpexporter: request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("zharpexporter: server returned %d", resp.StatusCode)
+	if err := send(e.client, req, gateFor(e.cfg.APIKey), e.logger, "logs"); err != nil {
+		return err
 	}
 
 	e.logger.Debug("shipped logs to Zharp", zap.Int("count", len(batch)))

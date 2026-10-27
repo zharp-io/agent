@@ -102,12 +102,11 @@ func (e *zharpMetricsExporter) sendHeartbeat(ctx context.Context) {
 		e.logger.Debug("heartbeat: create request failed", zap.Error(err))
 		return
 	}
-	resp, err := defaultHTTPClient(10 * time.Second).Do(req)
-	if err != nil {
-		e.logger.Debug("heartbeat: request failed", zap.Error(err))
+	// Through the key's gate too: a rejected key isn't sent every minute.
+	if err := send(defaultHTTPClient(10*time.Second), req, gateFor(e.cfg.APIKey), e.logger, "heartbeat"); err != nil {
+		e.logger.Debug("heartbeat: not sent", zap.Error(err))
 		return
 	}
-	resp.Body.Close()
 	e.logger.Debug("heartbeat sent", zap.String("hostname", e.hostname))
 }
 
@@ -147,14 +146,8 @@ func (e *zharpMetricsExporter) shipMetrics(ctx context.Context, batch []metricPo
 		return err
 	}
 
-	resp, err := defaultHTTPClient(e.cfg.Timeout).Do(req)
-	if err != nil {
-		return fmt.Errorf("zharpexporter: metrics request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("zharpexporter: metrics server returned %d", resp.StatusCode)
+	if err := send(defaultHTTPClient(e.cfg.Timeout), req, gateFor(e.cfg.APIKey), e.logger, "metrics"); err != nil {
+		return err
 	}
 
 	e.logger.Debug("shipped metrics to Zharp", zap.Int("count", len(batch)))
