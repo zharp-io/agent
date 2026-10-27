@@ -124,14 +124,8 @@ func (e *zharpTracesExporter) shipTraces(ctx context.Context, batch []spanRecord
 		return err
 	}
 
-	resp, err := e.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("zharpexporter: traces request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("zharpexporter: traces server returned %d", resp.StatusCode)
+	if err := send(e.client, req, gateFor(e.cfg.APIKey), e.logger, "traces"); err != nil {
+		return err
 	}
 
 	e.logger.Debug("shipped spans to Zharp", zap.Int("count", len(batch)))
