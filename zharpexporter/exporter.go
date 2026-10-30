@@ -3,6 +3,7 @@ package zharpexporter
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,6 +32,10 @@ type logEntry struct {
 	Env     string `json:"env,omitempty"`
 	Version string `json:"version,omitempty"`
 	Source  string `json:"source,omitempty"`
+	// The trace and span the record was written in, as 32 and 16 lowercase hex characters —
+	// named as the spans payload names them. Omitted when the record has none.
+	TraceID string `json:"traceId,omitempty"`
+	SpanID  string `json:"spanId,omitempty"`
 }
 
 type ingestPayload struct {
@@ -160,6 +165,8 @@ func (e *zharpLogsExporter) convertLogs(ld plog.Logs) []logEntry {
 					Env:       tags.Env,
 					Version:   tags.Version,
 					Source:    tags.Source,
+					TraceID:   traceIDHex(lr.TraceID()),
+					SpanID:    spanIDHex(lr.SpanID()),
 				})
 			}
 		}
@@ -211,4 +218,20 @@ func severityToLevel(sn plog.SeverityNumber) string {
 		// SeverityNumberUnspecified — syslog/filelog lines with no OTel severity.
 		return "info"
 	}
+}
+
+// traceIDHex is the trace ID as hex, or "" when the record has none.
+func traceIDHex(id pcommon.TraceID) string {
+	if id.IsEmpty() {
+		return ""
+	}
+	return hex.EncodeToString(id[:])
+}
+
+// spanIDHex is the span ID as hex, or "" when the record has none.
+func spanIDHex(id pcommon.SpanID) string {
+	if id.IsEmpty() {
+		return ""
+	}
+	return hex.EncodeToString(id[:])
 }
