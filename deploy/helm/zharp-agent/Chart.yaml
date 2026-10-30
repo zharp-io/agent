@@ -2,8 +2,8 @@ apiVersion: v2
 name: zharp-agent
 description: >-
   The Zharp agent on every Kubernetes node: container logs (multi-line, masked, named by pod
-  annotations), kubelet and host metrics, and an OTLP endpoint for traces from the cluster's
-  applications.
+  annotations), kubelet and host metrics, and an OTLP endpoint that forwards the cluster's
+  applications' traces and logs to Zharp's OTLP ingest.
 type: application
 version: 0.1.0
 appVersion: "latest"

@@ -152,6 +152,14 @@ data:
         detectors: [env]
         timeout: 5s
         override: false
+      {{- if .Values.traces.enabled }}
+      # The node (host.name) and cluster on what applications send over OTLP. override: false
+      # keeps what the application set itself — its service.name above all.
+      resourcedetection/otlp:
+        detectors: [env]
+        timeout: 5s
+        override: false
+      {{- end }}
       batch:
         send_batch_size: 1000
         timeout: 5s
@@ -162,13 +170,26 @@ data:
         {{- with .Values.endpoint }}
         endpoint: {{ . | quote }}
         {{- end }}
+      {{- if .Values.traces.enabled }}
+      # Applications' OTLP traces and logs, forwarded unchanged to Zharp's OTLP ingest
+      # (<endpoint>/otlp) with the same key; gzipped, queued and retried.
+      otlp_http/zharp:
+        endpoint: {{ printf "%s/otlp" (trimSuffix "/" (default "https://api.zharp.io/api/v1" .Values.endpoint)) | quote }}
+        headers:
+          Authorization: "Bearer ${env:ZHARP_API_KEY}"
+        compression: gzip
+        retry_on_failure:
+          enabled: true
+        sending_queue:
+          enabled: true
+      {{- end }}
 
     service:
       extensions: [health_check, file_storage]
       pipelines:
-        {{- if or .Values.logs.enabled .Values.traces.enabled }}
+        {{- if .Values.logs.enabled }}
         logs:
-          receivers: [{{ if .Values.logs.enabled }}filelog{{ end }}{{ if and .Values.logs.enabled .Values.traces.enabled }}, {{ end }}{{ if .Values.traces.enabled }}otlp{{ end }}]
+          receivers: [filelog]
           processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection, batch]
           exporters: [zharp]
         {{- end }}
@@ -179,8 +200,14 @@ data:
           exporters: [zharp]
         {{- end }}
         {{- if .Values.traces.enabled }}
-        traces:
+        # Applications' OpenTelemetry, sent on as OTLP (Application Monitoring), tagged with
+        # the pod, workload and zharp.io/* annotations on the way.
+        traces/otlp:
           receivers: [otlp]
-          processors: [memory_limiter, k8sattributes, zharp_logs, batch]
-          exporters: [zharp]
+          processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection/otlp, batch]
+          exporters: [otlp_http/zharp]
+        logs/otlp:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection/otlp, batch]
+          exporters: [otlp_http/zharp]
         {{- end }}

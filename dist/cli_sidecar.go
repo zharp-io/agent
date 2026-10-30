@@ -368,15 +368,29 @@ func (s sidecarSettings) config() cfgMap {
 	// "sidecar": every task or instance is its own short-lived host, so Zharp drops it from the
 	// host list once it stops instead of keeping a trail of offline entries.
 	exporter := cfgMap{"api_key": "${env:" + scAPIKey + "}", "kind": "sidecar"}
+	// The application's OpenTelemetry traces and logs go on to Zharp's OTLP ingest as OTLP, with
+	// the same key — gzipped, queued and retried like the host install's.
+	otlpEndpoint := otlpEndpointFor("")
 	if s.Endpoint {
 		exporter["endpoint"] = "${env:" + scEndpoint + "}"
+		otlpEndpoint = "${env:" + scEndpoint + "}/otlp"
+	}
+	otlpExporter := cfgMap{
+		"endpoint":         otlpEndpoint,
+		"headers":          cfgMap{"Authorization": "Bearer ${env:" + scAPIKey + "}"},
+		"compression":      "gzip",
+		"retry_on_failure": cfgMap{"enabled": true},
+		"sending_queue":    cfgMap{"enabled": true},
 	}
 
+	// resourcedetection here is already the platform's (ECS, Cloud Run, Container Apps) with
+	// override: false, so it plays the part resourcedetection/otlp plays on a host; the
+	// transform fills the unified service tags only where the application left them unset.
 	common := []string{"memory_limiter", "resourcedetection", "transform/sidecar", "batch"}
 	pipelines := cfgMap{
-		"traces":  cfgMap{"receivers": []string{"otlp"}, "processors": common, "exporters": []string{"zharp"}},
-		"metrics": cfgMap{"receivers": metricsReceivers, "processors": common, "exporters": []string{"zharp"}},
-		"logs":    cfgMap{"receivers": []string{"otlp"}, "processors": common, "exporters": []string{"zharp"}},
+		"traces/otlp": cfgMap{"receivers": []string{"otlp"}, "processors": common, "exporters": []string{otlpExporterID}},
+		"logs/otlp":   cfgMap{"receivers": []string{"otlp"}, "processors": common, "exporters": []string{otlpExporterID}},
+		"metrics":     cfgMap{"receivers": metricsReceivers, "processors": common, "exporters": []string{"zharp"}},
 	}
 	if len(s.LogPaths) > 0 {
 		// Cloud Run and Container Apps keep a container's stdout to themselves; an app that
@@ -410,7 +424,7 @@ func (s sidecarSettings) config() cfgMap {
 		"extensions": cfgMap{"health_check": cfgMap{"endpoint": fmt.Sprintf("0.0.0.0:%d", scHealthPort)}},
 		"receivers":  receivers,
 		"processors": processors,
-		"exporters":  cfgMap{"zharp": exporter},
+		"exporters":  cfgMap{"zharp": exporter, otlpExporterID: otlpExporter},
 		"service": cfgMap{
 			"extensions": []string{"health_check"},
 			"pipelines":  pipelines,
@@ -508,7 +522,8 @@ func sidecarHelp() {
     ZHARP_BATCH_TIMEOUT  how long data waits to be batched (2s)
     ZHARP_MEMORY_LIMIT_MIB  memory ceiling (80% of the container limit)
 
-  Receives OTLP on :4317 (gRPC) and :4318 (HTTP); health on :13133
+  Receives OTLP on :4317 (gRPC) and :4318 (HTTP) — traces and logs go on to Zharp's OTLP ingest
+  (<ZHARP_ENDPOINT>/otlp); health on :13133
   (check it with: zharp-collector health).`)
 }
 

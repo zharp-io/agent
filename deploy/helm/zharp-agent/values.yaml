@@ -48,7 +48,8 @@ metrics:
   kubeletInsecureSkipVerify: true
 
 traces:
-  # Applications in the cluster send OTLP to this agent: grpc 4317, http 4318.
+  # Applications in the cluster send OTLP to this agent: grpc 4317, http 4318. Their traces and
+  # logs are forwarded as OTLP to Zharp's OTLP ingest (<endpoint>/otlp), tagged with the pod.
   enabled: true
 
 otlp:

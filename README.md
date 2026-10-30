@@ -120,7 +120,7 @@ docker service update --force zharp_zharp-collector
 
 ### Kubernetes / EKS / GKE / AKS
 
-Runs as a **DaemonSet** — one pod per node, control plane included — collecting every container's logs (`/var/log/pods`, multi-line stack traces joined), kubelet node/pod/container metrics and node metrics, and receiving OTLP from your apps. Everything is tagged with pod, namespace, node and workload, and named by the `zharp.io/service`, `zharp.io/env`, `zharp.io/version` and `zharp.io/source` pod annotations (`zharp.io/logs: "false"` opts a pod out; `zharp.io/logs-exclude` and `zharp.io/logs-mask` add per-pod rules).
+Runs as a **DaemonSet** — one pod per node, control plane included — collecting every container's logs (`/var/log/pods`, multi-line stack traces joined), kubelet node/pod/container metrics and node metrics, and receiving OTLP from your apps (traces and logs go on to Zharp's OTLP ingest, `<endpoint>/otlp`, tagged with the pod). Everything is tagged with pod, namespace, node and workload, and named by the `zharp.io/service`, `zharp.io/env`, `zharp.io/version` and `zharp.io/source` pod annotations (`zharp.io/logs: "false"` opts a pod out; `zharp.io/logs-exclude` and `zharp.io/logs-mask` add per-pod rules).
 
 **Helm**
 
@@ -216,7 +216,9 @@ The ports are bound to localhost because traces carry URLs, queries and error me
 
 **Turning it off:** install with `--no-otlp` (or `ZHARP_NO_OTLP=1`, also read by `setup.ps1`). That's noted at the top of the config so `update` doesn't add it back. On an existing install, remove the `otlp` receiver and the `traces/otlp` and `logs/otlp` pipelines from `config.yaml`, add the line ``## OTLP receiver left out (--no-otlp); `zharp-collector update` keeps it out.`` at the top, and restart the service.
 
-**Updating from an older version:** `zharp-collector update` adds the receiver, the `otlp_http/zharp` exporter and the two pipelines; the old `traces` pipeline (spans through the `zharp` exporter) is replaced by `traces/otlp`. A traces pipeline you edited yourself is left as it is and reported.
+The `zharp` exporter carries only the collector's own logs and metrics (to `/agent/*`); it no longer sends traces. The Helm chart, the Kubernetes manifests, the Docker and Swarm configs and the serverless `sidecar` all forward applications' OTLP the same way, through `otlp_http/zharp`.
+
+**Updating from an older version:** `zharp-collector update` adds the receiver, the `otlp_http/zharp` exporter and the two pipelines. Any pipeline that still sends traces through the `zharp` exporter is removed (or, if it also exports elsewhere, just loses `zharp`), and a `zharp` logs pipeline that reads `otlp` loses that receiver — `traces/otlp` and `logs/otlp` take over. Changes beyond the old generated `traces` pipeline are listed in the summary. Kubernetes: `helm upgrade` (or re-apply the manifests); sidecars pick up the new config on their next start.
 
 ---
 

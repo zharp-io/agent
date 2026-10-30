@@ -102,6 +102,24 @@ func TestSidecarConfigValidates(t *testing.T) {
 		if _, ok := pipes["logs/files"]; ok != (env["ZHARP_LOGS_PATH"] != "") {
 			t.Errorf("logs/files pipeline present=%v for %v", ok, env)
 		}
+		// The application's OTLP traces and logs go to the OTLP ingest, not the zharp exporter.
+		if _, ok := pipes["traces"]; ok {
+			t.Error("traces pipeline through the zharp exporter is back")
+		}
+		for _, id := range []string{"traces/otlp", "logs/otlp"} {
+			p, _ := pipes[id].(map[string]any)
+			if p == nil || len(p["exporters"].([]any)) != 1 || p["exporters"].([]any)[0] != otlpExporterID {
+				t.Errorf("%s: %v", id, p)
+			}
+		}
+		otlpExp := raw["exporters"].(map[string]any)[otlpExporterID].(map[string]any)
+		wantEndpoint := "https://api.zharp.io/api/v1/otlp"
+		if env["ZHARP_ENDPOINT"] != "" {
+			wantEndpoint = "${env:ZHARP_ENDPOINT}/otlp"
+		}
+		if otlpExp["endpoint"] != wantEndpoint || otlpExp["headers"].(map[string]any)["Authorization"] != "Bearer ${env:ZHARP_API_KEY}" {
+			t.Errorf("otlp exporter: %v", otlpExp)
+		}
 		if _, ok := raw["receivers"].(map[string]any)["hostmetrics"]; ok {
 			t.Error("sidecar must not collect host metrics")
 		}

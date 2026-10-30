@@ -9,6 +9,6 @@ Name your workloads with pod annotations (pod template metadata):
   zharp.io/logs-mask: '[{"pattern":"(token=)\\w+","replace":"${1}***"}]'
 {{- if and .Values.traces.enabled .Values.otlp.service.enabled }}
 
-Send traces from your applications:
+Send traces and logs from your applications (forwarded to Zharp's OTLP ingest, <endpoint>/otlp):
   OTEL_EXPORTER_OTLP_ENDPOINT=http://{{ include "zharp-agent.fullname" . }}.{{ .Release.Namespace }}.svc:4318
 {{- end }}

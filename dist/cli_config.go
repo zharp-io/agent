@@ -47,8 +47,8 @@ type LogSource struct {
 // metricsReceivers is the list of metric receiver names (e.g. ["hostmetrics", "postgresql"]).
 // receiverBlocks contains the raw YAML blocks for each additional metric receiver.
 // logSources is the list of named log sources (may be empty).
-// tracing turns on the OTLP receiver and the traces pipeline, for applications instrumented
-// with an OpenTelemetry SDK that report to this collector.
+// tracing turns on the OTLP receiver and the traces/otlp and logs/otlp pipelines, for
+// applications instrumented with an OpenTelemetry SDK that report to this collector.
 // endpoint overrides the Zharp API the exporter sends to; empty keeps the default.
 func buildConfigYAML(metricsReceivers []string, receiverBlocks []string, logSources []LogSource, tracing bool, endpoint string) string {
 	return buildConfig(configSpec{metricsReceivers: metricsReceivers, receiverBlocks: receiverBlocks, logSources: logSources, tracing: tracing, endpoint: endpoint})
@@ -101,7 +101,8 @@ const (
 		"      exporters: [" + otlpExporterID + "]\n"
 
 	// legacyTracesPipelineBlock is the traces pipeline installs wrote before the OTLP
-	// passthrough: spans through the zharp exporter to /agent/traces. `update` replaces it.
+	// passthrough: spans through the zharp exporter to /agent/traces, which Zharp no longer
+	// has (nor does the exporter). `update` removes it; traces/otlp takes its place.
 	legacyTracesPipelineBlock = "    traces:\n      receivers: [otlp]\n" +
 		"      processors: [memory_limiter, batch]\n" +
 		"      exporters: [zharp]\n"

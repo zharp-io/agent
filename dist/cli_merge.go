@@ -230,15 +230,19 @@ func mergeSources(content string, inventory []InventoryItem, detected []ServiceO
 		res.config = ensureLogRules(res.config)
 	}
 
+	// The zharp exporter carries no traces any more — Zharp reads them only at its OTLP ingest —
+	// so a config that still sends spans, or applications' OTLP logs, through it is moved off.
+	// Done even with --no-otlp: the collector won't load a traces pipeline into the zharp exporter.
+	if next, notes := withoutZharpOTLP(res.config); next != res.config {
+		res.config = next
+		res.notAdded = append(res.notAdded, notes...)
+	}
+
 	// Applications' OpenTelemetry traces and logs on localhost, forwarded to Zharp's OTLP ingest,
 	// as every install has them — unless it was installed with --no-otlp.
 	skip["apm"] = true
 	if plan.tracing && !strings.Contains(content, noOTLPMarker) {
-		next, note := addOTLPPassthrough(res.config)
-		if note != "" {
-			res.notAdded = append(res.notAdded, note)
-		}
-		if next != res.config {
+		if next := addOTLPPassthrough(res.config); next != res.config {
 			res.config = next
 			addedTypes["apm"] = true
 			skip["apm"] = false
@@ -347,27 +351,17 @@ func withoutInventoryType(items []InventoryItem, typ string) []InventoryItem {
 	return keep
 }
 
-// tracesPipelineRe finds a pipeline named plain "traces".
-var tracesPipelineRe = regexp.MustCompile(`(?m)^[ \t]+traces:[ \t]*\r?$`)
-
 // addOTLPPassthrough makes a config forward what applications send over OTLP to Zharp's OTLP
 // ingest: the OTLP receiver (when missing), the host-attributes processor, the otlphttp exporter
-// and the traces/otlp and logs/otlp pipelines. The traces pipeline older installs wrote — spans
-// through the zharp exporter — is the one thing it replaces: left in place, every span would go
-// out twice. A traces pipeline someone wrote themselves is left alone, and then nothing is added;
-// the note says why.
-func addOTLPPassthrough(content string) (string, string) {
+// and the traces/otlp and logs/otlp pipelines. It runs after withoutZharpOTLP, so no other
+// pipeline sends the same spans to Zharp.
+func addOTLPPassthrough(content string) string {
 	if strings.Contains(content, "\n  "+otlpExporterID+":") {
-		return content, "" // already forwarding
-	}
-	legacy := strings.Contains(content, legacyTracesPipelineBlock)
-	if !legacy && tracesPipelineRe.MatchString(content) {
-		return content, "Application traces and logs: this config has its own traces pipeline, left as it is. " +
-			"To forward OpenTelemetry to Zharp, add the " + otlpExporterID + " exporter and the traces/otlp and logs/otlp pipelines (see collector-config.yaml in the agent's repository)"
+		return content // already forwarding
 	}
 	api, apiKey := zharpExporterSettings(content)
 	if !strings.Contains(content, "\nservice:") || !strings.Contains(content, "\nprocessors:\n") || apiKey == "" {
-		return content, ""
+		return content
 	}
 
 	hasOTLP := false
@@ -385,13 +379,119 @@ func addOTLPPassthrough(content string) (string, string) {
 	// The exporters section is the one before service in every config install writes.
 	content = strings.Replace(content, "\nservice:", otlpExporterBlock(api, apiKey)+"\nservice:", 1)
 
-	if legacy {
-		return strings.Replace(content, legacyTracesPipelineBlock, otlpPipelinesBlock, 1), ""
-	}
 	if i := strings.Index(content, "\n    metrics:\n"); i >= 0 {
-		return content[:i+1] + otlpPipelinesBlock + content[i+1:], ""
+		return content[:i+1] + otlpPipelinesBlock + content[i+1:]
 	}
-	return strings.Replace(content, "\n  pipelines:\n", "\n  pipelines:\n"+otlpPipelinesBlock, 1), ""
+	return strings.Replace(content, "\n  pipelines:\n", "\n  pipelines:\n"+otlpPipelinesBlock, 1)
+}
+
+// flowListRe is a one-line list setting, "receivers: [a, b]".
+var flowListRe = regexp.MustCompile(`^(\s*(receivers|exporters):\s*\[)([^\]]*)\](.*)$`)
+
+// withoutZharpOTLP takes what applications send over OTLP off the zharp exporter: a traces
+// pipeline exporting to it is removed (or only loses that exporter, when it has others), and a
+// logs pipeline reading the otlp receiver into it loses that receiver (or is removed, when otlp
+// was its only one) — traces/otlp and logs/otlp carry both now. The notes name each change
+// beyond removing the traces pipeline install itself used to write.
+func withoutZharpOTLP(content string) (string, []string) {
+	lines := strings.SplitAfter(content, "\n")
+	indent := func(l string) int { return len(l) - len(strings.TrimLeft(l, " \t")) }
+	blank := func(l string) bool { t := strings.TrimSpace(l); return t == "" || strings.HasPrefix(t, "#") }
+	isZharp := func(id string) bool { return id == "zharp" || strings.HasPrefix(id, "zharp/") }
+	isOTLP := func(id string) bool { return id == "otlp" }
+	without := func(ids []string, drop func(string) bool) []string {
+		var keep []string
+		for _, id := range ids {
+			if !drop(id) {
+				keep = append(keep, id)
+			}
+		}
+		return keep
+	}
+
+	// The pipelines mapping under service.
+	start, pIndent := -1, 0
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "pipelines:" && indent(l) > 0 {
+			start, pIndent = i+1, indent(l)
+			break
+		}
+	}
+	if start < 0 {
+		return content, nil
+	}
+	out := append([]string(nil), lines[:start]...)
+	var notes []string
+	i := start
+	for i < len(lines) {
+		l := lines[i]
+		if blank(l) {
+			out = append(out, l)
+			i++
+			continue
+		}
+		if indent(l) <= pIndent {
+			break // past the pipelines
+		}
+		// One pipeline: its name line and everything indented under it.
+		name := strings.TrimSuffix(strings.TrimSpace(l), ":")
+		end := i + 1
+		for end < len(lines) && (blank(lines[end]) || indent(lines[end]) > indent(l)) {
+			end++
+		}
+		// Trailing blank lines belong to what follows.
+		for end > i+1 && strings.TrimSpace(lines[end-1]) == "" {
+			end--
+		}
+		block := append([]string(nil), lines[i:end]...)
+		i = end
+
+		list := func(key string) (int, []string) {
+			for k, bl := range block {
+				if m := flowListRe.FindStringSubmatch(strings.TrimRight(bl, "\r\n")); m != nil && m[2] == key {
+					var ids []string
+					for _, id := range strings.Split(m[3], ",") {
+						if id = strings.TrimSpace(id); id != "" {
+							ids = append(ids, id)
+						}
+					}
+					return k, ids
+				}
+			}
+			return -1, nil
+		}
+		setList := func(k int, ids []string) {
+			m := flowListRe.FindStringSubmatch(strings.TrimRight(block[k], "\r\n"))
+			block[k] = m[1] + strings.Join(ids, ", ") + "]" + m[4] + "\n"
+		}
+		signal, _, _ := strings.Cut(name, "/")
+		ek, exporters := list("exporters")
+		rk, receivers := list("receivers")
+		toZharp := ek >= 0 && len(without(exporters, isZharp)) < len(exporters)
+
+		switch {
+		case signal == "traces" && toZharp:
+			if rest := without(exporters, isZharp); len(rest) > 0 {
+				setList(ek, rest)
+				out = append(out, block...)
+				notes = append(notes, fmt.Sprintf("Pipeline %s no longer exports to zharp, which doesn't carry traces; applications' traces go through traces/otlp", name))
+			} else if strings.Join(block, "") != legacyTracesPipelineBlock {
+				notes = append(notes, fmt.Sprintf("Pipeline %s removed: it sent traces through the zharp exporter, which doesn't carry them any more; applications' traces go through traces/otlp", name))
+			}
+		case signal == "logs" && toZharp && rk >= 0 && len(without(receivers, isOTLP)) < len(receivers):
+			if rest := without(receivers, isOTLP); len(rest) > 0 {
+				setList(rk, rest)
+				out = append(out, block...)
+				notes = append(notes, fmt.Sprintf("Pipeline %s: applications' OTLP logs moved to logs/otlp", name))
+			} else {
+				notes = append(notes, fmt.Sprintf("Pipeline %s removed: applications' OTLP logs go through logs/otlp", name))
+			}
+		default:
+			out = append(out, block...)
+		}
+	}
+	out = append(out, lines[i:]...)
+	return strings.Join(out, ""), notes
 }
 
 // zharpExporterSettings reads the zharp exporter's endpoint and api_key as written in content

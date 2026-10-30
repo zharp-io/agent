@@ -110,8 +110,9 @@ func TestMergeMovesLegacyTracesToOTLPPassthrough(t *testing.T) {
 	}
 }
 
-// A traces pipeline someone wrote is theirs: update doesn't add a second one next to it.
-func TestMergeLeavesCustomTracesPipeline(t *testing.T) {
+// The zharp exporter carries no traces: a hand-edited traces pipeline into it is moved off too
+// (the collector wouldn't load it), and the change is reported.
+func TestMergeMovesCustomZharpTracesPipeline(t *testing.T) {
 	fakeHost(t)
 	custom := strings.Replace(legacyConfig(t), "      processors: [memory_limiter, batch]\n      exporters: [zharp]\n",
 		"      processors: [memory_limiter, resourcedetection, batch]\n      exporters: [zharp]\n", 1)
@@ -119,10 +120,42 @@ func TestMergeLeavesCustomTracesPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.config != custom {
-		t.Errorf("custom traces pipeline config changed:\n%s", res.config)
+	if strings.Contains(res.config, "    traces:\n") || strings.Count(res.config, "    traces/otlp:\n") != 1 {
+		t.Errorf("custom zharp traces pipeline not replaced:\n%s", res.config)
 	}
-	if len(res.notAdded) != 1 || !strings.Contains(res.notAdded[0], "own traces pipeline") {
+	if len(res.notAdded) != 1 || !strings.Contains(res.notAdded[0], "Pipeline traces removed") {
 		t.Errorf("notAdded = %v", res.notAdded)
+	}
+	validateMerged(t, res.config)
+}
+
+// A traces pipeline that also exports elsewhere only loses zharp; one that never used zharp, and
+// the logs pipeline of the host's own sources, are left alone. OTLP logs leave a zharp logs
+// pipeline for logs/otlp.
+func TestWithoutZharpOTLP(t *testing.T) {
+	in := "service:\n  pipelines:\n" +
+		"    traces:\n      receivers: [otlp]\n      processors: [batch]\n      exporters: [zharp, otlp/vendor]\n" +
+		"\n" +
+		"    traces/other:\n      receivers: [otlp]\n      exporters: [otlp/vendor]\n" +
+		"    logs:\n      receivers: [docker_logs, otlp]\n      exporters: [zharp]\n" +
+		"    logs/apps:\n      receivers: [otlp]\n      exporters: [zharp]\n" +
+		"    metrics:\n      receivers: [hostmetrics, otlp]\n      exporters: [zharp]\n" +
+		"telemetry: {}\n"
+	want := "service:\n  pipelines:\n" +
+		"    traces:\n      receivers: [otlp]\n      processors: [batch]\n      exporters: [otlp/vendor]\n" +
+		"\n" +
+		"    traces/other:\n      receivers: [otlp]\n      exporters: [otlp/vendor]\n" +
+		"    logs:\n      receivers: [docker_logs]\n      exporters: [zharp]\n" +
+		"    metrics:\n      receivers: [hostmetrics, otlp]\n      exporters: [zharp]\n" +
+		"telemetry: {}\n"
+	got, notes := withoutZharpOTLP(in)
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if len(notes) != 3 {
+		t.Errorf("notes = %v", notes)
+	}
+	if again, n := withoutZharpOTLP(got); again != got || len(n) != 0 {
+		t.Errorf("second pass changed it: %v\n%s", n, again)
 	}
 }

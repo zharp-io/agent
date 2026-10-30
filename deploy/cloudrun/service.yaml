@@ -13,7 +13,7 @@
 #
 # Logs: Cloud Run sends every container's stdout to Cloud Logging, and a sidecar cannot read
 # another container's stdout. Either export logs from the app's OpenTelemetry SDK over OTLP
-# (as traces and metrics are), or have the app also write its log to the shared in-memory
+# (as traces are; both go on to Zharp's OTLP ingest), or have the app also write its log to the shared in-memory
 # volume below, which the agent tails (ZHARP_LOGS_PATH). stdout keeps going to Cloud Logging.
 # The volume lives in the instance's memory: keep the file small (rotate or truncate it).
 #

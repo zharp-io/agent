@@ -141,6 +141,12 @@ data:
         detectors: [env]
         timeout: 5s
         override: false
+      # The node (host.name) and cluster on what applications send over OTLP. override: false
+      # keeps what the application set itself — its service.name above all.
+      resourcedetection/otlp:
+        detectors: [env]
+        timeout: 5s
+        override: false
       batch:
         send_batch_size: 1000
         timeout: 5s
@@ -148,22 +154,39 @@ data:
     exporters:
       zharp:
         api_key: ${env:ZHARP_API_KEY}
+      # Applications' OTLP traces and logs, forwarded unchanged to Zharp's OTLP ingest
+      # (<endpoint>/otlp) with the same key; gzipped, queued and retried.
+      otlp_http/zharp:
+        endpoint: "https://api.zharp.io/api/v1/otlp"
+        headers:
+          Authorization: "Bearer ${env:ZHARP_API_KEY}"
+        compression: gzip
+        retry_on_failure:
+          enabled: true
+        sending_queue:
+          enabled: true
 
     service:
       extensions: [health_check, file_storage]
       pipelines:
         logs:
-          receivers: [filelog, otlp]
+          receivers: [filelog]
           processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection, batch]
           exporters: [zharp]
         metrics:
           receivers: [kubeletstats, hostmetrics, otlp]
           processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection, batch]
           exporters: [zharp]
-        traces:
+        # Applications' OpenTelemetry, sent on as OTLP (Application Monitoring), tagged with
+        # the pod, workload and zharp.io/* annotations on the way.
+        traces/otlp:
           receivers: [otlp]
-          processors: [memory_limiter, k8sattributes, zharp_logs, batch]
-          exporters: [zharp]
+          processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection/otlp, batch]
+          exporters: [otlp_http/zharp]
+        logs/otlp:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection/otlp, batch]
+          exporters: [otlp_http/zharp]
 ---
 # Source: zharp-agent/templates/rbac.yaml
 # Read-only: the pods on the node and their owners (for workload names and annotations), and
