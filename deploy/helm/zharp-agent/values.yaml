@@ -41,7 +41,7 @@ metrics:
   enabled: true
   # Node, pod and container CPU, memory, network and filesystem from the kubelet.
   kubelet: true
-  # The node's own CPU, memory, disk, network and load (reads the host's /proc).
+  # The node's own CPU, memory, filesystems, network, load and uptime (reads the host's /proc).
   host: true
   collectionInterval: 30s
   # The kubelet's serving certificate is self-signed on most clusters.

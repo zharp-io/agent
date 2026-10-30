@@ -12,8 +12,9 @@ const typeStr = "zharp"
 
 // NewFactory creates the Zharp exporter factory.
 //
-// It carries the agent's own logs and metrics to the /agent/* endpoints. Traces are not its job:
-// applications' OpenTelemetry goes to Zharp's OTLP ingest through the otlphttp exporter.
+// It carries the agent's own logs, database and broker metrics, and its heartbeat to the
+// /agent/* endpoints. Applications' OpenTelemetry and the host and container metrics go to
+// Zharp's OTLP ingest through the otlphttp exporter instead.
 func NewFactory() exporter.Factory {
 	return exporter.NewFactory(
 		component.MustNewType(typeStr),

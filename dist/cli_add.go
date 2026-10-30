@@ -224,17 +224,8 @@ func parseAddArgs(svcType string, args []string) (receiver, block string, logSou
 			err = e
 			return
 		}
-		endpoint := "unix:///var/run/docker.sock"
-		if runtime.GOOS == "windows" {
-			endpoint = "npipe:////./pipe/docker_engine"
-		}
-		receiver = "docker_stats"
-		block = fmt.Sprintf(`
-  docker_stats:
-    endpoint: %s
-    collection_interval: 30s
-    timeout: 20s
-`, endpoint)
+		receiver = dockerReceiverIDs
+		block = dockerReceiverBlocks()
 
 	case "nginx_log":
 		svcName := fs.String("service", "nginx", "")
@@ -509,32 +500,69 @@ func addReceiverToContent(content, receiver, block string) (string, error) {
 		content = strings.Replace(content, marker, "\n"+block+marker, 1)
 	}
 
-	// Append receiver name to the metrics pipeline receivers list.
-	re := regexp.MustCompile(`([ \t]+metrics:[ \t]*\r?\n[ \t]+receivers:[ \t]*\[)([^\]]*)\]`)
-	content = re.ReplaceAllStringFunc(content, func(m string) string {
-		sub := re.FindStringSubmatch(m)
-		if len(sub) < 3 {
-			return m
+	// Host and container receivers join metrics/host (OTLP); the rest the metrics pipeline.
+	// A config from before metrics/host keeps everything in metrics until `update` moves it.
+	var host, other []string
+	for _, name := range names {
+		if isHostReceiver(name) && hasPipeline(content, hostPipelineID) {
+			host = append(host, name)
+		} else {
+			other = append(other, name)
 		}
+	}
+	if len(host) > 0 {
+		content = addToPipeline(content, hostPipelineID, host)
+	}
+	if len(other) > 0 {
+		if hasPipeline(content, "metrics") {
+			content = addToPipeline(content, "metrics", other)
+		} else {
+			content = insertPipeline(content, metricsPipelineBlock(other))
+		}
+	}
+
+	return content, nil
+}
+
+// pipelineListRe matches a pipeline's one-line receivers list: group 1 up to "[", group 2 the ids.
+func pipelineListRe(pipeline string) *regexp.Regexp {
+	return regexp.MustCompile(`(\n[ \t]+` + regexp.QuoteMeta(pipeline) + `:[ \t]*\r?\n[ \t]+receivers:[ \t]*\[)([^\]]*)\]`)
+}
+
+// hasPipeline reports whether the config has the pipeline (with a one-line receivers list).
+func hasPipeline(content, pipeline string) bool {
+	return pipelineListRe(pipeline).MatchString(content)
+}
+
+// addToPipeline appends ids to a pipeline's receivers, skipping those already there.
+func addToPipeline(content, pipeline string, ids []string) string {
+	re := pipelineListRe(pipeline)
+	return re.ReplaceAllStringFunc(content, func(m string) string {
+		sub := re.FindStringSubmatch(m)
 		existing := strings.TrimSpace(sub[2])
 		present := map[string]bool{}
 		for _, r := range strings.Split(existing, ",") {
 			present[strings.TrimSpace(r)] = true
 		}
-		for _, name := range names {
-			if present[name] {
+		for _, id := range ids {
+			if present[id] {
 				continue
 			}
+			present[id] = true
 			if existing == "" {
-				existing = name
+				existing = id
 			} else {
-				existing += ", " + name
+				existing += ", " + id
 			}
 		}
 		return sub[1] + existing + "]"
 	})
+}
 
-	return content, nil
+// insertPipeline adds a pipeline block at the top of service.pipelines.
+func insertPipeline(content, block string) string {
+	const marker = "\n  pipelines:\n"
+	return strings.Replace(content, marker, marker+block, 1)
 }
 
 // addLogSourcesToConfig adds named filelog/<name> receivers for each LogSource,
@@ -587,7 +615,7 @@ func addLogSourcesToContent(content string, sources []LogSource) string {
 				"      receivers: [" + receiverKey + "]\n" +
 				"      processors: [memory_limiter, resourcedetection, batch]\n" +
 				"      exporters: [zharp]\n"
-			content = strings.Replace(content, "    metrics:", logsPipeline+"    metrics:", 1)
+			content = insertPipeline(content, logsPipeline)
 		} else {
 			re := regexp.MustCompile(`([ \t]+logs:[ \t]*\r?\n[ \t]+receivers:[ \t]*\[)([^\]]*)\]`)
 			content = re.ReplaceAllStringFunc(content, func(m string) string {

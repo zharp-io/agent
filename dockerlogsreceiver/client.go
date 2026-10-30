@@ -64,23 +64,39 @@ type containerSummary struct {
 }
 
 type containerInfo struct {
-	ID     string `json:"Id"`
-	Name   string `json:"Name"`
-	Config struct {
-		Tty    bool              `json:"Tty"`
-		Image  string            `json:"Image"`
-		Labels map[string]string `json:"Labels"`
-		Env    []string          `json:"Env"`
+	ID           string `json:"Id"`
+	Name         string `json:"Name"`
+	Created      string `json:"Created"`
+	RestartCount int64  `json:"RestartCount"`
+	Config       struct {
+		Tty          bool                `json:"Tty"`
+		Image        string              `json:"Image"`
+		Labels       map[string]string   `json:"Labels"`
+		Env          []string            `json:"Env"`
+		ExposedPorts map[string]struct{} `json:"ExposedPorts"`
 	} `json:"Config"`
 	State struct {
-		Running   bool   `json:"Running"`
-		StartedAt string `json:"StartedAt"`
+		Status     string `json:"Status"`
+		Running    bool   `json:"Running"`
+		OOMKilled  bool   `json:"OOMKilled"`
+		ExitCode   int    `json:"ExitCode"`
+		StartedAt  string `json:"StartedAt"`
+		FinishedAt string `json:"FinishedAt"`
 	} `json:"State"`
 	HostConfig struct {
 		LogConfig struct {
 			Type string `json:"Type"`
 		} `json:"LogConfig"`
+		PortBindings map[string][]portBinding `json:"PortBindings"`
 	} `json:"HostConfig"`
+	NetworkSettings struct {
+		Ports map[string][]portBinding `json:"Ports"`
+	} `json:"NetworkSettings"`
+}
+
+type portBinding struct {
+	HostIP   string `json:"HostIp"`
+	HostPort string `json:"HostPort"`
 }
 
 type dockerEvent struct {
@@ -124,6 +140,13 @@ func apiError(resp *http.Response) error {
 func (c *dockerClient) listRunning(ctx context.Context) ([]containerSummary, error) {
 	var out []containerSummary
 	err := c.getJSON(ctx, "/containers/json", &out)
+	return out, err
+}
+
+// listAll is every container, stopped ones included.
+func (c *dockerClient) listAll(ctx context.Context) ([]containerSummary, error) {
+	var out []containerSummary
+	err := c.getJSON(ctx, "/containers/json?all=1", &out)
 	return out, err
 }
 

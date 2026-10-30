@@ -64,19 +64,48 @@ data:
         endpoint: https://${env:K8S_NODE_IP}:10250
         insecure_skip_verify: true
         metric_groups: [node, pod, container]
+        # container.id on container metrics, so Zharp tells containers apart across restarts.
+        extra_metadata_labels: [container.id]
       hostmetrics:
         root_path: /hostfs
         collection_interval: 30s
         scrapers:
           cpu:
+            metrics:
+              system.cpu.time:
+                enabled: false
+              system.cpu.utilization:
+                enabled: true
+              system.cpu.logical.count:
+                enabled: true
           memory:
+            metrics:
+              system.memory.utilization:
+                enabled: true
+              system.memory.limit:
+                enabled: true
           load:
           network:
-          disk:
+            metrics:
+              system.network.connections:
+                enabled: false
+              system.network.packets:
+                enabled: false
+              system.network.dropped:
+                enabled: false
+              system.network.errors:
+                enabled: false
           filesystem:
+            exclude_fs_types:
+              fs_types: [autofs, binfmt_misc, bpf, cgroup, cgroup2, configfs, debugfs, devpts, devtmpfs, fusectl, hugetlbfs, iso9660, mqueue, nsfs, overlay, proc, procfs, pstore, rpc_pipefs, securityfs, selinuxfs, squashfs, sysfs, tmpfs, tracefs]
+              match_type: strict
             exclude_mount_points:
               mount_points: ['^/(dev|proc|sys|run|snap|var/lib/(kubelet|containerd|docker))(/|\z)']
               match_type: regexp
+            metrics:
+              system.filesystem.inodes.usage:
+                enabled: false
+          system:
       otlp:
         protocols:
           grpc:
@@ -141,6 +170,22 @@ data:
         detectors: [env]
         timeout: 5s
         override: false
+      # The node on host and container metrics: host.name and k8s.cluster.name from
+      # OTEL_RESOURCE_ATTRIBUTES (with zharp.agent.version, which the binary adds), the OS
+      # from the system detector.
+      resourcedetection/host:
+        detectors: [env, system]
+        timeout: 5s
+        system:
+          resource_attributes:
+            os.name:
+              enabled: true
+            os.version:
+              enabled: true
+            os.description:
+              enabled: true
+            host.arch:
+              enabled: true
       # The node (host.name) and cluster on what applications send over OTLP. override: false
       # keeps what the application set itself — its service.name above all.
       resourcedetection/otlp:
@@ -154,8 +199,8 @@ data:
     exporters:
       zharp:
         api_key: ${env:ZHARP_API_KEY}
-      # Applications' OTLP traces and logs, forwarded unchanged to Zharp's OTLP ingest
-      # (<endpoint>/otlp) with the same key; gzipped, queued and retried.
+      # Node and container metrics, and applications' OTLP traces and logs, to Zharp's OTLP
+      # ingest (<endpoint>/otlp) with the same key; gzipped, queued and retried.
       otlp_http/zharp:
         endpoint: "https://api.zharp.io/api/v1/otlp"
         headers:
@@ -173,8 +218,15 @@ data:
           receivers: [filelog]
           processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection, batch]
           exporters: [zharp]
+        # Node and container metrics (Servers & Containers), as OTLP. zharp is there for its
+        # heartbeat; it doesn't send these.
+        metrics/host:
+          receivers: [kubeletstats, hostmetrics]
+          processors: [memory_limiter, resourcedetection/host, batch]
+          exporters: [otlp_http/zharp, zharp]
+        # Applications' own OpenTelemetry metrics.
         metrics:
-          receivers: [kubeletstats, hostmetrics, otlp]
+          receivers: [otlp]
           processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection, batch]
           exporters: [zharp]
         # Applications' OpenTelemetry, sent on as OTLP (Application Monitoring), tagged with

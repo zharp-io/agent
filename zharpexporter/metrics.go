@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"math"
 	"runtime"
 	"time"
@@ -181,6 +182,9 @@ func convertMetrics(md pmetric.Metrics) []metricPoint {
 
 		for j := 0; j < rm.ScopeMetrics().Len(); j++ {
 			sm := rm.ScopeMetrics().At(j)
+			if sentAsOTLP(sm.Scope().Name()) {
+				continue
+			}
 			for k := 0; k < sm.Metrics().Len(); k++ {
 				m := sm.Metrics().At(k)
 				points = append(points, extractPoints(m, resourceAttrs)...)
@@ -188,6 +192,26 @@ func convertMetrics(md pmetric.Metrics) []metricPoint {
 		}
 	}
 	return points
+}
+
+// otlpScopes are the receivers whose metrics go to Zharp's OTLP ingest (Servers & Containers)
+// through the otlp_http/zharp exporter. The zharp exporter sits in that pipeline only for its
+// heartbeat, so it leaves them out rather than send them twice.
+var otlpScopes = []string{
+	"/receiver/hostmetricsreceiver",
+	"/receiver/dockerstatsreceiver",
+	"/receiver/kubeletstatsreceiver",
+	"github.com/zharp-io/agent/dockerlogsreceiver",
+}
+
+// sentAsOTLP reports metrics of a scope that goes to the OTLP ingest instead.
+func sentAsOTLP(scope string) bool {
+	for _, s := range otlpScopes {
+		if strings.Contains(scope, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func extractPoints(m pmetric.Metric, resourceAttrs map[string]any) []metricPoint {

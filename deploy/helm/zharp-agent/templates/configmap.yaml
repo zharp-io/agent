@@ -49,6 +49,8 @@ data:
         endpoint: https://${env:K8S_NODE_IP}:10250
         insecure_skip_verify: {{ .Values.metrics.kubeletInsecureSkipVerify }}
         metric_groups: [node, pod, container]
+        # container.id on container metrics, so Zharp tells containers apart across restarts.
+        extra_metadata_labels: [container.id]
       {{- end }}
       {{- if and .Values.metrics.enabled .Values.metrics.host }}
       hostmetrics:
@@ -56,14 +58,41 @@ data:
         collection_interval: {{ .Values.metrics.collectionInterval }}
         scrapers:
           cpu:
+            metrics:
+              system.cpu.time:
+                enabled: false
+              system.cpu.utilization:
+                enabled: true
+              system.cpu.logical.count:
+                enabled: true
           memory:
+            metrics:
+              system.memory.utilization:
+                enabled: true
+              system.memory.limit:
+                enabled: true
           load:
           network:
-          disk:
+            metrics:
+              system.network.connections:
+                enabled: false
+              system.network.packets:
+                enabled: false
+              system.network.dropped:
+                enabled: false
+              system.network.errors:
+                enabled: false
           filesystem:
+            exclude_fs_types:
+              fs_types: [autofs, binfmt_misc, bpf, cgroup, cgroup2, configfs, debugfs, devpts, devtmpfs, fusectl, hugetlbfs, iso9660, mqueue, nsfs, overlay, proc, procfs, pstore, rpc_pipefs, securityfs, selinuxfs, squashfs, sysfs, tmpfs, tracefs]
+              match_type: strict
             exclude_mount_points:
               mount_points: ['^/(dev|proc|sys|run|snap|var/lib/(kubelet|containerd|docker))(/|\z)']
               match_type: regexp
+            metrics:
+              system.filesystem.inodes.usage:
+                enabled: false
+          system:
       {{- end }}
       {{- if .Values.traces.enabled }}
       otlp:
@@ -152,6 +181,22 @@ data:
         detectors: [env]
         timeout: 5s
         override: false
+      # The node on host and container metrics: host.name and k8s.cluster.name from
+      # OTEL_RESOURCE_ATTRIBUTES (with zharp.agent.version, which the binary adds), the OS
+      # from the system detector.
+      resourcedetection/host:
+        detectors: [env, system]
+        timeout: 5s
+        system:
+          resource_attributes:
+            os.name:
+              enabled: true
+            os.version:
+              enabled: true
+            os.description:
+              enabled: true
+            host.arch:
+              enabled: true
       {{- if .Values.traces.enabled }}
       # The node (host.name) and cluster on what applications send over OTLP. override: false
       # keeps what the application set itself — its service.name above all.
@@ -170,9 +215,9 @@ data:
         {{- with .Values.endpoint }}
         endpoint: {{ . | quote }}
         {{- end }}
-      {{- if .Values.traces.enabled }}
-      # Applications' OTLP traces and logs, forwarded unchanged to Zharp's OTLP ingest
-      # (<endpoint>/otlp) with the same key; gzipped, queued and retried.
+      {{- if or $metrics .Values.traces.enabled }}
+      # Node and container metrics, and applications' OTLP traces and logs, to Zharp's OTLP
+      # ingest (<endpoint>/otlp) with the same key; gzipped, queued and retried.
       otlp_http/zharp:
         endpoint: {{ printf "%s/otlp" (trimSuffix "/" (default "https://api.zharp.io/api/v1" .Values.endpoint)) | quote }}
         headers:
@@ -193,9 +238,18 @@ data:
           processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection, batch]
           exporters: [zharp]
         {{- end }}
-        {{- if or $metrics .Values.traces.enabled }}
+        {{- if $metrics }}
+        # Node and container metrics (Servers & Containers), as OTLP. zharp is there for its
+        # heartbeat; it doesn't send these.
+        metrics/host:
+          receivers: [{{ $r := list }}{{ if and .Values.metrics.enabled .Values.metrics.kubelet }}{{ $r = append $r "kubeletstats" }}{{ end }}{{ if and .Values.metrics.enabled .Values.metrics.host }}{{ $r = append $r "hostmetrics" }}{{ end }}{{ join ", " $r }}]
+          processors: [memory_limiter, resourcedetection/host, batch]
+          exporters: [otlp_http/zharp, zharp]
+        {{- end }}
+        {{- if .Values.traces.enabled }}
+        # Applications' own OpenTelemetry metrics.
         metrics:
-          receivers: [{{ $r := list }}{{ if and .Values.metrics.enabled .Values.metrics.kubelet }}{{ $r = append $r "kubeletstats" }}{{ end }}{{ if and .Values.metrics.enabled .Values.metrics.host }}{{ $r = append $r "hostmetrics" }}{{ end }}{{ if .Values.traces.enabled }}{{ $r = append $r "otlp" }}{{ end }}{{ join ", " $r }}]
+          receivers: [otlp]
           processors: [memory_limiter, k8sattributes, zharp_logs, resourcedetection, batch]
           exporters: [zharp]
         {{- end }}

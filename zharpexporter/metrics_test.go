@@ -97,3 +97,22 @@ func TestNamedDatabaseExporterSendsNoHeartbeat(t *testing.T) {
 		t.Errorf("named exporter sent %d heartbeats; the main exporter owns them", rec.heartbeats)
 	}
 }
+
+func TestHostAndContainerMetricsAreLeftToOTLP(t *testing.T) {
+	md := pmetric.NewMetrics()
+	for _, scope := range []string{
+		"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver/internal/scraper/cpuscraper",
+		"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/dockerstatsreceiver",
+		"github.com/zharp-io/agent/dockerlogsreceiver",
+		"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver",
+	} {
+		sm := md.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty()
+		sm.Scope().SetName(scope)
+		m := sm.Metrics().AppendEmpty()
+		m.SetName("some.metric")
+		m.SetEmptyGauge().DataPoints().AppendEmpty().SetIntValue(1)
+	}
+	if points := convertMetrics(md); len(points) != 1 {
+		t.Fatalf("got %d points, want only the PostgreSQL one", len(points))
+	}
+}

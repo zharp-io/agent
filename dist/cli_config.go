@@ -72,8 +72,8 @@ type configSpec struct {
 // Traces and logs from an OpenTelemetry SDK go out as OTLP through the standard otlphttp
 // exporter, not through the zharp exporter's JSON: the SDK already speaks the format Zharp's
 // application monitoring reads, so the agent only adds the host's attributes, batches and
-// retries. The agent's own sources (log files, containers, the journal, metrics) keep going to
-// the /agent/* endpoints through the zharp exporter.
+// retries. The agent's own logs (files, containers, the journal) and database metrics keep
+// going to the /agent/* endpoints through the zharp exporter.
 const (
 	otlpReceiverBlock = "  otlp:\n" +
 		"    protocols:\n" +
@@ -107,6 +107,122 @@ const (
 		"      processors: [memory_limiter, batch]\n" +
 		"      exporters: [zharp]\n"
 )
+
+// Host and container metrics (Servers & Containers) go to Zharp's OTLP ingest as OTLP metrics:
+// the metrics/host pipeline reads the host (hostmetrics), Docker (docker_stats for usage,
+// docker_state for state, exit codes and restarts) and, in Kubernetes, the kubelet, and exports
+// through otlp_http/zharp. The zharp exporter is listed too only for its heartbeat, which
+// carries the agent's inventory; it doesn't send these metrics (zharpexporter drops them).
+// Databases and brokers stay in the metrics pipeline, to the zharp exporter.
+const (
+	hostPipelineID    = "metrics/host"
+	hostProcessorID   = "resourcedetection/host"
+	dockerReceiverIDs = "docker_stats,docker_state"
+
+	// hostmetricsBlock is what Servers & Containers reads: CPU and memory use, the core count
+	// and memory total, load, filesystem use per mount, network bytes and uptime. Volume is
+	// kept down by turning off what nothing reads (CPU time, inodes, packet counts).
+	hostmetricsBlock = "  hostmetrics:\n" +
+		"    collection_interval: 30s\n" +
+		"    scrapers:\n" +
+		"      cpu:\n" +
+		"        metrics:\n" +
+		"          system.cpu.time:\n            enabled: false\n" +
+		"          system.cpu.utilization:\n            enabled: true\n" +
+		"          system.cpu.logical.count:\n            enabled: true\n" +
+		"      memory:\n" +
+		"        metrics:\n" +
+		"          system.memory.utilization:\n            enabled: true\n" +
+		"          system.memory.limit:\n            enabled: true\n" +
+		"      load:\n" +
+		"      filesystem:\n" +
+		"        exclude_fs_types:\n" +
+		"          fs_types: [autofs, binfmt_misc, bpf, cgroup, cgroup2, configfs, debugfs, devpts, devtmpfs, fusectl, hugetlbfs, iso9660, mqueue, nsfs, overlay, proc, procfs, pstore, rpc_pipefs, securityfs, selinuxfs, squashfs, sysfs, tmpfs, tracefs]\n" +
+		"          match_type: strict\n" +
+		"        exclude_mount_points:\n" +
+		"          mount_points: [\"/dev/.*\", \"/proc/.*\", \"/sys/.*\", \"/run/.*\", \"/snap/.*\", \"/var/lib/docker/.*\", \"/var/lib/kubelet/.*\", \"/var/lib/containers/.*\", \"/boot/efi\"]\n" +
+		"          match_type: regexp\n" +
+		"        metrics:\n" +
+		"          system.filesystem.inodes.usage:\n            enabled: false\n" +
+		"      network:\n" +
+		"        metrics:\n" +
+		"          system.network.connections:\n            enabled: false\n" +
+		"          system.network.packets:\n            enabled: false\n" +
+		"          system.network.dropped:\n            enabled: false\n" +
+		"          system.network.errors:\n            enabled: false\n" +
+		"      system:\n"
+
+	// hostProcessorBlock names the server: host.name as the OS reports it (what the heartbeat
+	// uses too), the OS, addresses and, on a cloud VM, provider and region. env carries
+	// zharp.agent.version, which the binary puts in OTEL_RESOURCE_ATTRIBUTES. Off-cloud the
+	// cloud detectors find no metadata endpoint and add nothing.
+	hostProcessorBlock = "  " + hostProcessorID + ":\n" +
+		"    detectors: [env, system, ec2, gcp, azure]\n" +
+		"    timeout: 5s\n" +
+		"    system:\n" +
+		"      hostname_sources: [os]\n" +
+		"      resource_attributes:\n" +
+		"        os.name:\n          enabled: true\n" +
+		"        os.version:\n          enabled: true\n" +
+		"        os.description:\n          enabled: true\n" +
+		"        host.ip:\n          enabled: true\n" +
+		"        host.arch:\n          enabled: true\n"
+)
+
+// isHostReceiver reports a receiver whose metrics belong in metrics/host.
+func isHostReceiver(id string) bool {
+	base, _, _ := strings.Cut(strings.TrimSpace(id), "/")
+	switch base {
+	case "hostmetrics", "docker_stats", "docker_state", "kubeletstats":
+		return true
+	}
+	return false
+}
+
+// splitMetricReceivers splits receiver ids (some comma-joined, like dockerReceiverIDs) into
+// the host pipeline's and the metrics pipeline's.
+func splitMetricReceivers(ids []string) (host, other []string) {
+	for _, joined := range ids {
+		for _, id := range strings.Split(joined, ",") {
+			if id = strings.TrimSpace(id); id == "" {
+				continue
+			}
+			if isHostReceiver(id) {
+				host = append(host, id)
+			} else {
+				other = append(other, id)
+			}
+		}
+	}
+	return host, other
+}
+
+// hostPipelineBlock is the metrics/host pipeline for ids.
+func hostPipelineBlock(ids []string) string {
+	return "    " + hostPipelineID + ":\n" +
+		"      receivers: [" + strings.Join(ids, ", ") + "]\n" +
+		"      processors: [memory_limiter, " + hostProcessorID + ", batch]\n" +
+		"      exporters: [" + otlpExporterID + ", zharp]\n"
+}
+
+// metricsPipelineBlock is the pipeline of database and broker receivers, to the zharp exporter.
+func metricsPipelineBlock(ids []string) string {
+	return "    metrics:\n" +
+		"      receivers: [" + strings.Join(ids, ", ") + "]\n" +
+		"      processors: [memory_limiter, resourcedetection, batch]\n" +
+		"      exporters: [zharp]\n"
+}
+
+// dockerReceiverBlocks are docker_stats (usage) and docker_state (state, exit codes, restarts,
+// ports), both on the Docker socket.
+func dockerReceiverBlocks() string {
+	endpoint := "unix:///var/run/docker.sock"
+	if runtime.GOOS == "windows" {
+		endpoint = "npipe:////./pipe/docker_engine"
+	}
+	return fmt.Sprintf("\n  docker_stats:\n    endpoint: %s\n    collection_interval: 30s\n    timeout: 20s\n"+
+		"  docker_state:\n    endpoint: %s\n    collection_interval: 30s\n", endpoint, endpoint)
+}
 
 // defaultAPIEndpoint is the Zharp API the zharp exporter uses when the config names none.
 const defaultAPIEndpoint = "https://api.zharp.io/api/v1"
@@ -178,14 +294,7 @@ func buildConfig(spec configSpec) string {
 	sb.WriteString("\n")
 
 	sb.WriteString("receivers:\n")
-	sb.WriteString("  hostmetrics:\n")
-	sb.WriteString("    collection_interval: 5s\n")
-	sb.WriteString("    scrapers:\n")
-	sb.WriteString("      cpu:\n")
-	sb.WriteString("      memory:\n")
-	sb.WriteString("      disk:\n")
-	sb.WriteString("      network:\n")
-	sb.WriteString("      load:\n")
+	sb.WriteString(hostmetricsBlock)
 
 	// One filelog/<name> receiver per log source, each stamped with its service name.
 	for _, src := range logSources {
@@ -230,6 +339,7 @@ func buildConfig(spec configSpec) string {
 	sb.WriteString("  resourcedetection:\n")
 	sb.WriteString("    detectors: [system, env]\n")
 	sb.WriteString("    timeout: 5s\n")
+	sb.WriteString(hostProcessorBlock)
 	if tracing {
 		sb.WriteString(otlpProcessorBlock)
 	}
@@ -244,9 +354,9 @@ func buildConfig(spec configSpec) string {
 	}
 	// What this host was found running, sent with each heartbeat so the dashboard can show it.
 	fmt.Fprintf(&sb, "    inventory_file: %q\n", installInventoryFile())
-	if tracing {
-		sb.WriteString(otlpExporterBlock(endpoint, apiKeyRef))
-	}
+	// Host and container metrics always go to the OTLP ingest, so the exporter is always there;
+	// --no-otlp only leaves out the receiver applications send to.
+	sb.WriteString(otlpExporterBlock(endpoint, apiKeyRef))
 
 	sb.WriteString("\nservice:\n")
 	if storage {
@@ -277,10 +387,12 @@ func buildConfig(spec configSpec) string {
 		sb.WriteString(otlpPipelinesBlock)
 	}
 
-	// Metrics pipeline.
-	fmt.Fprintf(&sb, "    metrics:\n      receivers: [%s]\n", strings.Join(metricsReceivers, ", "))
-	sb.WriteString("      processors: [memory_limiter, resourcedetection, batch]\n")
-	sb.WriteString("      exporters: [zharp]\n")
+	// Host and container metrics to the OTLP ingest; databases and brokers to the zharp exporter.
+	hostIDs, otherIDs := splitMetricReceivers(metricsReceivers)
+	sb.WriteString(hostPipelineBlock(hostIDs))
+	if len(otherIDs) > 0 {
+		sb.WriteString(metricsPipelineBlock(otherIDs))
+	}
 
 	return sb.String()
 }

@@ -174,8 +174,7 @@ func writeConfig(f *os.File, apiKey string, metricsReceivers []string, extraBloc
 	w("extensions:\n  health_check:\n    endpoint: 0.0.0.0:13133\n\n")
 
 	w("receivers:\n")
-	w("  hostmetrics:\n    collection_interval: 60s\n    scrapers:\n")
-	w("      cpu:\n      memory:\n      disk:\n      network:\n      load:\n")
+	w(hostmetricsBlock)
 	for _, b := range extraBlocks {
 		w(b + "\n")
 	}
@@ -186,6 +185,7 @@ func writeConfig(f *os.File, apiKey string, metricsReceivers []string, extraBloc
 	w("  batch:\n    send_batch_size: 500\n    timeout: 5s\n")
 	w("  memory_limiter:\n    limit_mib: 128\n    spike_limit_mib: 32\n    check_interval: 5s\n")
 	w("  resourcedetection:\n    detectors: [system, env]\n    timeout: 5s\n")
+	w(hostProcessorBlock)
 	w(otlpProcessorBlock)
 
 	w("\nexporters:\n")
@@ -194,9 +194,11 @@ func writeConfig(f *os.File, apiKey string, metricsReceivers []string, extraBloc
 
 	w("\nservice:\n  extensions: [health_check]\n  pipelines:\n")
 	w(otlpPipelinesBlock)
-	fmt.Fprintf(f, "    metrics:\n      receivers: [%s]\n", strings.Join(metricsReceivers, ", "))
-	w("      processors: [memory_limiter, resourcedetection, batch]\n")
-	w("      exporters: [zharp]\n")
+	hostIDs, otherIDs := splitMetricReceivers(metricsReceivers)
+	w(hostPipelineBlock(hostIDs))
+	if len(otherIDs) > 0 {
+		w(metricsPipelineBlock(otherIDs))
+	}
 }
 
 var wizardScanner = bufio.NewScanner(os.Stdin)

@@ -98,7 +98,7 @@ func TestSecondPostgresGetsItsOwnPipeline(t *testing.T) {
 		`database: "postgresql/orders"`,
 		"metrics/postgresql_orders:\n      receivers: [postgresql/orders]",
 		"exporters: [zharp/postgresql_orders]",
-		"receivers: [hostmetrics, postgresql]", // the first database is untouched
+		"    metrics:\n      receivers: [postgresql]\n", // the first database is untouched
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("missing %q in:\n%s", want, content)

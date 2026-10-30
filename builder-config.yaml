@@ -26,6 +26,12 @@ receivers:
   # Container logs through the Docker Engine API socket (the collector user can't read /var/lib/docker).
   - gomod: github.com/zharp-io/agent/dockerlogsreceiver v0.0.1
     path: ./dockerlogsreceiver
+  # Every container's state, exit code, OOM kill, ports and restarts, stopped ones included
+  # (docker_stats only sees running containers). Same module and API client as docker_logs.
+  - gomod: github.com/zharp-io/agent/dockerlogsreceiver v0.0.1
+    import: github.com/zharp-io/agent/dockerlogsreceiver/dockerstatereceiver
+    name: dockerstatereceiver
+    path: ./dockerlogsreceiver
   # Serverless sidecar mode (`zharp-collector sidecar`): ECS FireLens logs, DogStatsD-style metrics.
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/fluentforwardreceiver v0.154.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/statsdreceiver v0.154.0

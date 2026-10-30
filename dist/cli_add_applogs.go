@@ -106,7 +106,7 @@ func ensureInLogsPipeline(content, id string) string {
 			"      receivers: [" + id + "]\n" +
 			"      processors: [memory_limiter, resourcedetection, batch]\n" +
 			"      exporters: [zharp]\n"
-		return strings.Replace(content, "    metrics:", logs+"    metrics:", 1)
+		return insertPipeline(content, logs)
 	}
 	return logsPipelineRe.ReplaceAllStringFunc(content, func(m string) string {
 		sub := logsPipelineRe.FindStringSubmatch(m)

@@ -61,7 +61,7 @@ func TestPlanAutomaticLeavesDatabasesForTheDashboard(t *testing.T) {
 		}
 	}
 
-	if strings.Join(plan.metricsReceivers, ",") != "hostmetrics,docker_stats" {
+	if strings.Join(plan.metricsReceivers, ",") != "hostmetrics,"+dockerReceiverIDs {
 		t.Errorf("receivers: %v", plan.metricsReceivers)
 	}
 	if !plan.tracing || !plan.hasDocker {
@@ -86,8 +86,10 @@ func TestAddMySQLAddsBothReceiversOnce(t *testing.T) {
 	}
 	data, _ := os.ReadFile(path)
 	config := string(data)
-	if !strings.Contains(config, "receivers: [hostmetrics, mysql, sqlquery/mysql]") {
-		t.Errorf("metrics pipeline: %s", config[strings.Index(config, "metrics:"):])
+	// Databases go to the metrics pipeline (the zharp exporter), not to metrics/host.
+	if !strings.Contains(config, "    metrics:\n      receivers: [mysql, sqlquery/mysql]\n") ||
+		!strings.Contains(config, "    metrics/host:\n      receivers: [hostmetrics]\n") {
+		t.Errorf("pipelines: %s", config[strings.Index(config, "pipelines:"):])
 	}
 	if n := strings.Count(config, "\n  sqlquery/mysql:"); n != 1 {
 		t.Errorf("sqlquery/mysql block appears %d times", n)
@@ -107,7 +109,7 @@ func TestBuildConfigCarriesInventoryAndEndpoint(t *testing.T) {
 			t.Errorf("config is missing %q", want)
 		}
 	}
-	if strings.Contains(buildConfigYAML([]string{"hostmetrics"}, nil, nil, false, ""), "    endpoint: \"") {
-		t.Error("an empty endpoint should leave the exporter on its default")
+	if !strings.Contains(buildConfigYAML([]string{"hostmetrics"}, nil, nil, false, ""), "  zharp:\n    api_key: \"${env:ZHARP_API_KEY}\"\n    inventory_file: ") {
+		t.Error("an empty endpoint should leave the zharp exporter on its default")
 	}
 }

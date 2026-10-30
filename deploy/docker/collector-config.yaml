@@ -22,23 +22,59 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
-  # Host CPU, memory, disk, network
+  # Host CPU, memory, filesystems, network, load and uptime
   hostmetrics:
     root_path: /hostfs
     collection_interval: 30s
     scrapers:
       cpu:
+        metrics:
+          system.cpu.time:
+            enabled: false
+          system.cpu.utilization:
+            enabled: true
+          system.cpu.logical.count:
+            enabled: true
       memory:
-      disk:
-      network:
-      filesystem:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+          system.memory.limit:
+            enabled: true
       load:
+      filesystem:
+        exclude_fs_types:
+          fs_types: [autofs, binfmt_misc, bpf, cgroup, cgroup2, configfs, debugfs, devpts, devtmpfs, fusectl, hugetlbfs, iso9660, mqueue, nsfs, overlay, proc, procfs, pstore, rpc_pipefs, securityfs, selinuxfs, squashfs, sysfs, tmpfs, tracefs]
+          match_type: strict
+        exclude_mount_points:
+          mount_points: ["/dev/.*", "/proc/.*", "/sys/.*", "/run/.*", "/snap/.*", "/var/lib/docker/.*", "/var/lib/kubelet/.*", "/var/lib/containers/.*", "/boot/efi"]
+          match_type: regexp
+        metrics:
+          system.filesystem.inodes.usage:
+            enabled: false
+      network:
+        metrics:
+          system.network.connections:
+            enabled: false
+          system.network.packets:
+            enabled: false
+          system.network.dropped:
+            enabled: false
+          system.network.errors:
+            enabled: false
+      system:
 
   # Per-container CPU, memory, network (pulled from Docker API)
   docker_stats:
     endpoint: unix:///var/run/docker.sock
     collection_interval: 30s
     timeout: 20s
+
+  # Every container's state, exit code, OOM kill, ports and restarts, stopped ones included
+  # (docker_stats only sees running containers).
+  docker_state:
+    endpoint: unix:///var/run/docker.sock
+    collection_interval: 30s
 
 processors:
   batch:
@@ -51,6 +87,24 @@ processors:
   resourcedetection:
     detectors: [system, docker, env]
     timeout: 5s
+  # Names the server on host and container metrics: the Docker host's name (the docker detector
+  # asks the daemon, since inside the container the hostname is the container's), the OS,
+  # addresses and, on a cloud VM, provider and region. env carries zharp.agent.version.
+  resourcedetection/host:
+    detectors: [env, docker, system, ec2, gcp, azure]
+    timeout: 5s
+    system:
+      resource_attributes:
+        os.name:
+          enabled: true
+        os.version:
+          enabled: true
+        os.description:
+          enabled: true
+        host.ip:
+          enabled: true
+        host.arch:
+          enabled: true
   # The Docker host's attributes (host.name, os.type) on what applications send over OTLP.
   # override: false keeps what the application set itself — its service.name above all.
   resourcedetection/otlp:
@@ -70,8 +124,10 @@ processors:
 exporters:
   zharp:
     api_key: "${env:ZHARP_API_KEY}"
-  # Applications' OTLP traces and logs, forwarded unchanged to Zharp's OTLP ingest with the same
-  # key. Set ZHARP_ENDPOINT (e.g. https://zharp.example.com/api/v1) for self-hosted Zharp.
+    endpoint: "${env:ZHARP_ENDPOINT:-https://api.zharp.io/api/v1}"
+  # Host and container metrics, and applications' OTLP traces and logs, to Zharp's OTLP ingest
+  # with the same key. Set ZHARP_ENDPOINT (e.g. https://zharp.example.com/api/v1) for
+  # self-hosted Zharp.
   otlp_http/zharp:
     endpoint: "${env:ZHARP_ENDPOINT:-https://api.zharp.io/api/v1}/otlp"
     headers:
@@ -89,8 +145,15 @@ service:
       receivers: [docker_logs]
       processors: [memory_limiter, zharp_logs, resourcedetection, batch]
       exporters: [zharp]
+    # Host and container metrics (Servers & Containers), as OTLP. zharp is there for its
+    # heartbeat; it doesn't send these.
+    metrics/host:
+      receivers: [hostmetrics, docker_stats, docker_state]
+      processors: [memory_limiter, resourcedetection/host, batch]
+      exporters: [otlp_http/zharp, zharp]
+    # Applications' own OpenTelemetry metrics.
     metrics:
-      receivers: [hostmetrics, docker_stats, otlp]
+      receivers: [otlp]
       processors: [memory_limiter, resourcedetection, batch]
       exporters: [zharp]
     # OpenTelemetry from applications, sent on as OTLP (Application Monitoring).

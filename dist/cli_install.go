@@ -240,7 +240,7 @@ func cliInstall() {
 	}
 
 	// Detected but skipped stays visible in the dashboard, so it can be set up later.
-	inventory := []InventoryItem{{Type: "host", Label: "Host metrics", Status: invCollecting, Detail: "CPU, memory, disk, network and load"}}
+	inventory := []InventoryItem{{Type: "host", Label: "Host metrics", Status: invCollecting, Detail: "CPU, memory, filesystems, network, load and uptime"}}
 	if tracing {
 		inventory = append(inventory, apmInventoryItem())
 		uiOK("Applications can send OpenTelemetry traces and logs to 127.0.0.1:4318 (HTTP) or 127.0.0.1:4317 (gRPC).")
@@ -574,17 +574,8 @@ func configureService(svcType string) (receiver, block string, logSources []LogS
 		uiDimMsg("  roles: [{ role: 'clusterMonitor', db: 'admin' }] })")
 
 	case "docker":
-		endpoint := "unix:///var/run/docker.sock"
-		if runtime.GOOS == "windows" {
-			endpoint = "npipe:////./pipe/docker_engine"
-		}
-		receiver = "docker_stats"
-		block = fmt.Sprintf(`
-  docker_stats:
-    endpoint: %s
-    collection_interval: 30s
-    timeout: 20s
-`, endpoint)
+		receiver = dockerReceiverIDs
+		block = dockerReceiverBlocks()
 		isDocker = true
 		uiOK("Docker container metrics configured.")
 	}

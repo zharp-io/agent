@@ -22,6 +22,7 @@ var version = "dev"
 
 func main() {
 	zharpexporter.AgentVersion = version
+	setAgentVersionResource(version)
 
 	info := component.BuildInfo{
 		Command:     "zharp-collector",

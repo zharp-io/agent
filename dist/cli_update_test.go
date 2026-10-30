@@ -140,7 +140,7 @@ func installedConfig(t *testing.T) string {
 }
 
 var installedInventory = []InventoryItem{
-	{Type: "host", Label: "Host metrics", Status: invCollecting, Detail: "CPU, memory, disk, network and load"},
+	{Type: "host", Label: "Host metrics", Status: invCollecting, Detail: "CPU, memory, filesystems, network, load and uptime"},
 	{Type: "apm", Label: "Application traces", Status: invCollecting},
 	{Type: "pg", Label: "PostgreSQL", Status: invCollecting},
 	{Type: "log:myapp", Label: "myapp logs", Status: invCollecting, Detail: "/srv/myapp/logs/*.log"},
@@ -164,7 +164,7 @@ func TestMergeAddsOnlyWhatIsMissing(t *testing.T) {
 	}
 	after := res.config
 
-	if got := strings.Join(receiverIDList(t, after), ","); got != "hostmetrics,filelog/myapp,otlp,postgresql,docker_stats,docker_logs,journald,filelog/pm2" {
+	if got := strings.Join(receiverIDList(t, after), ","); got != "hostmetrics,filelog/myapp,otlp,postgresql,docker_stats,docker_state,docker_logs,journald,filelog/pm2" {
 		t.Errorf("receivers: %s", got)
 	}
 	if strings.Count(after, "\n  postgresql:") != 1 {
@@ -187,7 +187,8 @@ func TestMergeAddsOnlyWhatIsMissing(t *testing.T) {
 	}
 	// The pipelines only gained receivers; their processors are as they were.
 	for _, want := range []string{
-		"      receivers: [hostmetrics, postgresql, docker_stats]\n      processors: [memory_limiter, resourcedetection, batch]\n",
+		"    metrics/host:\n      receivers: [hostmetrics, docker_stats, docker_state]\n      processors: [memory_limiter, resourcedetection/host, batch]\n",
+		"    metrics:\n      receivers: [postgresql]\n      processors: [memory_limiter, resourcedetection, batch]\n",
 		"      receivers: [filelog/myapp, docker_logs, journald, filelog/pm2]\n      processors: [memory_limiter, zharp_logs, resourcedetection, batch]\n",
 		"  extensions: [health_check, file_storage]\n",
 	} {

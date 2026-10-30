@@ -41,7 +41,7 @@ func planAutomaticWith(detected []ServiceOption, appLogs bool) autoPlan {
 		envVars:          map[string]string{},
 		tracing:          true,
 		inventory: []InventoryItem{
-			{Type: "host", Label: "Host metrics", Status: invCollecting, Detail: "CPU, memory, disk, network and load"},
+			{Type: "host", Label: "Host metrics", Status: invCollecting, Detail: "CPU, memory, filesystems, network, load and uptime"},
 			apmInventoryItem(),
 		},
 	}
@@ -79,10 +79,10 @@ func planAutomaticWith(detected []ServiceOption, appLogs bool) autoPlan {
 			// IIS writes one folder per site under LogFiles; the glob picks up every one of them.
 			p.addLogs(s.Type, "IIS logs", "iis", []string{`C:\inetpub\logs\LogFiles\**\*.log`})
 		case "docker":
-			p.metricsReceivers = append(p.metricsReceivers, "docker_stats")
-			p.receiverBlocks = append(p.receiverBlocks, dockerBlock())
+			p.metricsReceivers = append(p.metricsReceivers, dockerReceiverIDs)
+			p.receiverBlocks = append(p.receiverBlocks, dockerReceiverBlocks())
 			p.hasDocker = true
-			p.inventory = append(p.inventory, InventoryItem{Type: s.Type, Label: "Docker", Status: invCollecting, Detail: "Container CPU, memory and network"})
+			p.inventory = append(p.inventory, InventoryItem{Type: s.Type, Label: "Docker", Status: invCollecting, Detail: "Container CPU, memory, network, state and restarts"})
 		case "redis":
 			switch redisProbe("localhost:6379") {
 			case redisOpen:
@@ -182,14 +182,6 @@ func mysqlReceiversNamed(host, port, user, name string) (receivers, block string
             value_type: int
 `, host, port, user, id, env, query)
 	return id + ", " + query, block
-}
-
-func dockerBlock() string {
-	endpoint := "unix:///var/run/docker.sock"
-	if runtime.GOOS == "windows" {
-		endpoint = "npipe:////./pipe/docker_engine"
-	}
-	return fmt.Sprintf("\n  docker_stats:\n    endpoint: %s\n    collection_interval: 30s\n    timeout: 20s\n", endpoint)
 }
 
 type redisState int

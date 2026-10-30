@@ -19,7 +19,8 @@ func TestOTLPEndpointFor(t *testing.T) {
 }
 
 // A fresh install receives OTLP on localhost and forwards traces and logs to the OTLP ingest of
-// the API it was given, with the agent's key; the agent's own logs and metrics are untouched.
+// the API it was given, with the agent's key, as it does the host's metrics; the agent's own logs
+// stay on the zharp exporter.
 func TestGeneratedConfigForwardsOTLP(t *testing.T) {
 	content := buildConfig(configSpec{
 		metricsReceivers: []string{"hostmetrics"},
@@ -35,7 +36,9 @@ func TestGeneratedConfigForwardsOTLP(t *testing.T) {
 		"    traces/otlp:\n      receivers: [otlp]\n      processors: [memory_limiter, resourcedetection/otlp, batch]\n      exporters: [otlp_http/zharp]\n",
 		"    logs/otlp:\n      receivers: [otlp]\n      processors: [memory_limiter, resourcedetection/otlp, batch]\n      exporters: [otlp_http/zharp]\n",
 		"    logs:\n      receivers: [filelog/myapp]\n      processors: [memory_limiter, zharp_logs, resourcedetection, batch]\n      exporters: [zharp]\n",
-		"    metrics:\n      receivers: [hostmetrics]\n      processors: [memory_limiter, resourcedetection, batch]\n      exporters: [zharp]\n",
+		// Host metrics go to the OTLP ingest too (zharp is there for its heartbeat); with no
+		// database there is no metrics pipeline.
+		"    metrics/host:\n      receivers: [hostmetrics]\n      processors: [memory_limiter, resourcedetection/host, batch]\n      exporters: [otlp_http/zharp, zharp]\n",
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("missing %q in\n%s", want, content)

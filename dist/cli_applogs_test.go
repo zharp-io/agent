@@ -181,8 +181,8 @@ func TestGeneratedConfigValidates(t *testing.T) {
 		receivers = append(receivers, journaldReceiver())
 	}
 	content := buildConfig(configSpec{
-		metricsReceivers: []string{"hostmetrics", "docker_stats"},
-		receiverBlocks:   []string{dockerBlock()},
+		metricsReceivers: []string{"hostmetrics", dockerReceiverIDs},
+		receiverBlocks:   []string{dockerReceiverBlocks()},
 		logSources:       []LogSource{{Name: "syslog", Paths: []string{"/var/log/auth.log"}}},
 		logReceivers:     receivers,
 		tracing:          true,

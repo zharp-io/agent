@@ -15,13 +15,44 @@ extensions:
 receivers:
   # Host metrics — always recommended
   hostmetrics:
-    collection_interval: 60s
+    collection_interval: 30s
     scrapers:
       cpu:
+        metrics:
+          system.cpu.time:
+            enabled: false
+          system.cpu.utilization:
+            enabled: true
+          system.cpu.logical.count:
+            enabled: true
       memory:
-      disk:
-      network:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+          system.memory.limit:
+            enabled: true
       load:
+      filesystem:
+        exclude_fs_types:
+          fs_types: [autofs, binfmt_misc, bpf, cgroup, cgroup2, configfs, debugfs, devpts, devtmpfs, fusectl, hugetlbfs, iso9660, mqueue, nsfs, overlay, proc, procfs, pstore, rpc_pipefs, securityfs, selinuxfs, squashfs, sysfs, tmpfs, tracefs]
+          match_type: strict
+        exclude_mount_points:
+          mount_points: ["/dev/.*", "/proc/.*", "/sys/.*", "/run/.*", "/snap/.*", "/var/lib/docker/.*", "/var/lib/kubelet/.*", "/var/lib/containers/.*", "/boot/efi"]
+          match_type: regexp
+        metrics:
+          system.filesystem.inodes.usage:
+            enabled: false
+      network:
+        metrics:
+          system.network.connections:
+            enabled: false
+          system.network.packets:
+            enabled: false
+          system.network.dropped:
+            enabled: false
+          system.network.errors:
+            enabled: false
+      system:
 
   # OpenTelemetry from applications on this host (traces and logs) — point an SDK's
   # OTEL_EXPORTER_OTLP_ENDPOINT at http://127.0.0.1:4318 (or 127.0.0.1:4317 for gRPC); no API key
@@ -53,6 +84,24 @@ processors:
   resourcedetection:
     detectors: [system, env]
     timeout: 5s
+  # Names the server on host metrics: host.name as the OS reports it, the OS, addresses and, on
+  # a cloud VM, provider and region. env carries zharp.agent.version.
+  resourcedetection/host:
+    detectors: [env, system, ec2, gcp, azure]
+    timeout: 5s
+    system:
+      hostname_sources: [os]
+      resource_attributes:
+        os.name:
+          enabled: true
+        os.version:
+          enabled: true
+        os.description:
+          enabled: true
+        host.ip:
+          enabled: true
+        host.arch:
+          enabled: true
   # The host's attributes (host.name, os.type) on what applications send. override: false keeps
   # what the application set itself — its service.name above all.
   resourcedetection/otlp:
@@ -64,7 +113,7 @@ exporters:
   zharp:
     api_key: "${env:ZHARP_API_KEY}"
     endpoint: "${env:ZHARP_ENDPOINT:-https://api.zharp.io/api/v1}"
-  # Applications' traces and logs, forwarded unchanged to Zharp's OTLP ingest (<API>/otlp) with
+  # Host metrics, and applications' traces and logs, to Zharp's OTLP ingest (<API>/otlp) with
   # the same key. Batches are gzipped, queued and retried while Zharp is unreachable.
   otlp_http/zharp:
     endpoint: "${env:ZHARP_ENDPOINT:-https://api.zharp.io/api/v1}/otlp"
@@ -79,10 +128,11 @@ exporters:
 service:
   extensions: [health_check]
   pipelines:
-    metrics:
+    # Host metrics (Servers & Containers), as OTLP. zharp is there for its heartbeat.
+    metrics/host:
       receivers: [hostmetrics]
-      processors: [memory_limiter, resourcedetection, batch]
-      exporters: [zharp]
+      processors: [memory_limiter, resourcedetection/host, batch]
+      exporters: [otlp_http/zharp, zharp]
     # Uncomment when you add filelog above:
     # logs:
     #   receivers: [filelog]

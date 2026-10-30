@@ -110,6 +110,7 @@ type mergeResult struct {
 	added     []InventoryItem // newly collecting
 	unchanged []string        // what the config already collected
 	notAdded  []string        // found, but left as it was on purpose: why, and how to add it
+	migrated  []string        // changes to what is already collected, to the current layout
 	docker    bool            // the collector's user needs the Docker socket
 	stateDir  bool            // a new receiver keeps positions in the state directory
 }
@@ -175,6 +176,13 @@ func mergeSources(content string, inventory []InventoryItem, detected []ServiceO
 		skip["host"] = true
 	}
 
+	// Host and container metrics go to the OTLP ingest now: move them onto metrics/host first,
+	// so what is added below lands in the right pipeline.
+	if next, notes := withHostMetricsPipeline(res.config); next != res.config {
+		res.config = next
+		res.migrated = append(res.migrated, notes...)
+	}
+
 	// Metric receivers. The first is hostmetrics, always there; the rest pair with their blocks.
 	for i, id := range plan.metricsReceivers[1:] {
 		next, err := addReceiverToContent(res.config, id, plan.receiverBlocks[i])
@@ -183,7 +191,7 @@ func mergeSources(content string, inventory []InventoryItem, detected []ServiceO
 		}
 		res.config = next
 		switch id {
-		case "docker_stats":
+		case dockerReceiverIDs:
 			addedTypes["docker"] = true
 			res.docker = true
 		case "redis":
@@ -285,7 +293,7 @@ func backfillInventory(items []InventoryItem, have []configReceiver) []Inventory
 		base, name, _ := strings.Cut(r.ID, "/")
 		switch {
 		case base == "hostmetrics":
-			add(InventoryItem{Type: "host", Label: "Host metrics", Status: invCollecting, Detail: "CPU, memory, disk, network and load"})
+			add(InventoryItem{Type: "host", Label: "Host metrics", Status: invCollecting, Detail: "CPU, memory, filesystems, network, load and uptime"})
 		case base == "otlp":
 			add(apmInventoryItem())
 		case dbTypes[base] != "":
@@ -356,7 +364,7 @@ func withoutInventoryType(items []InventoryItem, typ string) []InventoryItem {
 // and the traces/otlp and logs/otlp pipelines. It runs after withoutZharpOTLP, so no other
 // pipeline sends the same spans to Zharp.
 func addOTLPPassthrough(content string) string {
-	if strings.Contains(content, "\n  "+otlpExporterID+":") {
+	if strings.Contains(content, "\n    traces/otlp:") {
 		return content // already forwarding
 	}
 	api, apiKey := zharpExporterSettings(content)
@@ -376,13 +384,12 @@ func addOTLPPassthrough(content string) string {
 	if !strings.Contains(content, "\n  "+otlpProcessorID+":") {
 		content = strings.Replace(content, "\nprocessors:\n", "\nprocessors:\n"+otlpProcessorBlock, 1)
 	}
-	// The exporters section is the one before service in every config install writes.
-	content = strings.Replace(content, "\nservice:", otlpExporterBlock(api, apiKey)+"\nservice:", 1)
-
-	if i := strings.Index(content, "\n    metrics:\n"); i >= 0 {
-		return content[:i+1] + otlpPipelinesBlock + content[i+1:]
+	// The exporters section is the one before service in every config install writes. Host
+	// metrics may have brought the exporter already.
+	if !strings.Contains(content, "\n  "+otlpExporterID+":") {
+		content = strings.Replace(content, "\nservice:", otlpExporterBlock(api, apiKey)+"\nservice:", 1)
 	}
-	return strings.Replace(content, "\n  pipelines:\n", "\n  pipelines:\n"+otlpPipelinesBlock, 1)
+	return insertPipeline(content, otlpPipelinesBlock)
 }
 
 // flowListRe is a one-line list setting, "receivers: [a, b]".
@@ -515,7 +522,7 @@ func zharpExporterSettings(content string) (endpoint, apiKey string) {
 func receiverLabels(rs []configReceiver) []string {
 	names := map[string]string{
 		"hostmetrics": "Host metrics", "postgresql": "PostgreSQL", "mysql": "MySQL / MariaDB",
-		"redis": "Redis", "mongodb": "MongoDB", "docker_stats": "Docker", "docker_logs": "Docker container logs",
+		"redis": "Redis", "mongodb": "MongoDB", "docker_stats": "Docker", "docker_state": "Docker", "docker_logs": "Docker container logs",
 		"journald": "Service logs (journal)", "otlp": "Application traces and logs",
 	}
 	seen := map[string]bool{}
@@ -846,6 +853,9 @@ func printUpdateSummary(out applyOutcome, opts applyOptions) {
 				uiDimMsg(how)
 			}
 		}
+	}
+	for _, n := range out.res.migrated {
+		uiOK("Changed — " + n)
 	}
 	for _, n := range out.res.notAdded {
 		uiWarn("Not added — " + n)
