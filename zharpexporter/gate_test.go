@@ -117,7 +117,7 @@ func TestServerErrorStaysRetryable(t *testing.T) {
 
 func TestSignalsShareTheKeysGate(t *testing.T) {
 	if gateFor("key-a") != gateFor("key-a") {
-		t.Fatal("logs, metrics and traces with one key should share a gate")
+		t.Fatal("logs, metrics and heartbeats with one key should share a gate")
 	}
 	if gateFor("key-a") == gateFor("key-b") {
 		t.Fatal("different keys need their own gates")

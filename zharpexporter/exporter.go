@@ -32,8 +32,8 @@ type logEntry struct {
 	Env     string `json:"env,omitempty"`
 	Version string `json:"version,omitempty"`
 	Source  string `json:"source,omitempty"`
-	// The trace and span the record was written in, as 32 and 16 lowercase hex characters —
-	// named as the spans payload names them. Omitted when the record has none.
+	// The trace and span the record was written in, as 32 and 16 lowercase hex characters (the
+	// OTLP/JSON spelling). Omitted when the record has none.
 	TraceID string `json:"traceId,omitempty"`
 	SpanID  string `json:"spanId,omitempty"`
 }

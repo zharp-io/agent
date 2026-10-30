@@ -21,7 +21,7 @@ var errKeyRejected = consumererror.NewPermanent(errors.New("zharpexporter: Zharp
 
 // keyGate stops an API key Zharp has rejected (401/403) from being sent on every batch: one clear
 // error, then one probe an hour until it works again. Shared by every exporter using the key —
-// logs, metrics, traces and heartbeats back off together.
+// logs, metrics and heartbeats back off together.
 type keyGate struct {
 	mu        sync.Mutex
 	rejected  bool

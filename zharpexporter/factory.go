@@ -11,13 +11,15 @@ import (
 const typeStr = "zharp"
 
 // NewFactory creates the Zharp exporter factory.
+//
+// It carries the agent's own logs and metrics to the /agent/* endpoints. Traces are not its job:
+// applications' OpenTelemetry goes to Zharp's OTLP ingest through the otlphttp exporter.
 func NewFactory() exporter.Factory {
 	return exporter.NewFactory(
 		component.MustNewType(typeStr),
 		createDefaultConfig,
 		exporter.WithLogs(createLogsExporter, component.StabilityLevelBeta),
 		exporter.WithMetrics(createMetricsExporter, component.StabilityLevelBeta),
-		exporter.WithTraces(createTracesExporter, component.StabilityLevelBeta),
 	)
 }
 
@@ -51,16 +53,4 @@ func createMetricsExporter(
 		return nil, err
 	}
 	return newMetricsExporter(c, set.Logger), nil
-}
-
-func createTracesExporter(
-	ctx context.Context,
-	set exporter.Settings,
-	cfg component.Config,
-) (exporter.Traces, error) {
-	c := cfg.(*Config)
-	if err := c.Validate(); err != nil {
-		return nil, err
-	}
-	return newTracesExporter(c, set.Logger), nil
 }

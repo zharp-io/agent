@@ -8,7 +8,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
-	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.uber.org/zap"
 )
 
@@ -101,28 +100,6 @@ func TestConvertLogsCarriesUnifiedTags(t *testing.T) {
 		if strings.Contains(string(raw), k) {
 			t.Errorf("untagged entry carries %s: %s", k, raw)
 		}
-	}
-}
-
-func TestConvertTracesCarriesEnvAndVersion(t *testing.T) {
-	td := ptrace.NewTraces()
-	rs := td.ResourceSpans().AppendEmpty()
-	rs.Resource().Attributes().PutStr(AttrServiceName, "checkout")
-	rs.Resource().Attributes().PutStr(AttrEnvironment, "prod")
-	rs.Resource().Attributes().PutStr(AttrServiceVersion, "9.9")
-	rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty().SetName("GET /")
-
-	got := convertTraces(td)
-	if got[0].Env != "prod" || got[0].ServiceVer != "9.9" || got[0].ServiceName != "checkout" {
-		t.Errorf("span tags: %+v", got[0])
-	}
-
-	// Unset → omitted on the wire.
-	bare := ptrace.NewTraces()
-	bare.ResourceSpans().AppendEmpty().ScopeSpans().AppendEmpty().Spans().AppendEmpty().SetName("x")
-	raw, _ := json.Marshal(convertTraces(bare)[0])
-	if strings.Contains(string(raw), `"env"`) || strings.Contains(string(raw), `"serviceVersion"`) {
-		t.Errorf("untagged span carries tags: %s", raw)
 	}
 }
 
