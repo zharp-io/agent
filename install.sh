@@ -4,6 +4,8 @@
 # With an API key it installs, finds what runs on this server and starts collecting — no questions:
 #   curl -fsSL https://raw.githubusercontent.com/zharp-io/agent/main/install.sh | sudo bash -s -- --api-key zh_...
 # Without one it installs the binary and points at the guided setup.
+# Applications on the server can send OpenTelemetry traces and logs to 127.0.0.1:4318 (HTTP) or
+# :4317 (gRPC); the collector forwards them to Zharp. --no-otlp (or ZHARP_NO_OTLP=1) leaves it out.
 #
 # On a server where the collector is already set up (its config exists) it updates instead: the
 # binary is replaced and `zharp-collector update --apply` adds what the new version detects,
@@ -17,12 +19,14 @@ CONFIG_FILE="/etc/zharp-collector/config.yaml"
 API_KEY="${ZHARP_API_KEY:-}"
 ENDPOINT="${ZHARP_ENDPOINT:-}"
 NO_APP_LOGS="${ZHARP_NO_APP_LOGS:-}"
+NO_OTLP="${ZHARP_NO_OTLP:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --api-key|--token) API_KEY="$2"; shift 2 ;;
     --endpoint|--server) ENDPOINT="$2"; shift 2 ;;
     --version) ZHARP_VERSION="$2"; shift 2 ;;
     --no-app-logs) NO_APP_LOGS=1; shift ;;
+    --no-otlp) NO_OTLP=1; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -127,6 +131,7 @@ if [[ -n "$API_KEY" ]]; then
   ARGS=(install --yes --api-key "$API_KEY")
   [[ -n "$ENDPOINT" ]] && ARGS+=(--endpoint "$ENDPOINT")
   case "$NO_APP_LOGS" in 1|true|yes|on) ARGS+=(--no-app-logs) ;; esac
+  case "$NO_OTLP" in 1|true|yes|on) ARGS+=(--no-otlp) ;; esac
   exec "$INSTALL_DIR/zharp-collector" "${ARGS[@]}"
 fi
 

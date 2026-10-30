@@ -96,3 +96,8 @@ func inventoryFor(svcType string) InventoryItem {
 	}
 	return InventoryItem{Type: svcType, Label: label, Status: invCollecting}
 }
+
+// apmInventoryItem is the OTLP receiver applications send their traces and logs to.
+func apmInventoryItem() InventoryItem {
+	return InventoryItem{Type: "apm", Label: "Application traces and logs", Status: invCollecting, Detail: "OpenTelemetry on 127.0.0.1:4317 (gRPC) and :4318 (HTTP), forwarded to Zharp"}
+}

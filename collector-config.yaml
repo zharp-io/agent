@@ -4,6 +4,9 @@
 ##
 ## Or edit manually. Full reference:
 ##   https://github.com/zharp-io/agent#configuration
+##
+## Environment: ZHARP_API_KEY (required); ZHARP_ENDPOINT for self-hosted Zharp
+## (e.g. http://localhost:3000/api/v1), Zharp Cloud when unset.
 
 extensions:
   health_check:
@@ -20,15 +23,17 @@ receivers:
       network:
       load:
 
-  # Application traces (APM) — the port your instrumented apps report to.
-  # Bound to localhost: a trace carries request URLs, query text and error messages, so
-  # opening this to the network should be a deliberate choice.
-  # otlp:
-  #   protocols:
-  #     grpc:
-  #       endpoint: 127.0.0.1:4317
-  #     http:
-  #       endpoint: 127.0.0.1:4318
+  # OpenTelemetry from applications on this host (traces and logs) — point an SDK's
+  # OTEL_EXPORTER_OTLP_ENDPOINT at http://127.0.0.1:4318 (or 127.0.0.1:4317 for gRPC); no API key
+  # needed in the app. Bound to localhost: a trace carries request URLs, query text and error
+  # messages, so opening this to the network should be a deliberate choice.
+  # To turn it off, remove this receiver and the traces/otlp and logs/otlp pipelines below.
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 127.0.0.1:4318
 
   # Tail log files — add your own paths here
   # filelog:
@@ -48,10 +53,28 @@ processors:
   resourcedetection:
     detectors: [system, env]
     timeout: 5s
+  # The host's attributes (host.name, os.type) on what applications send. override: false keeps
+  # what the application set itself — its service.name above all.
+  resourcedetection/otlp:
+    detectors: [system]
+    timeout: 5s
+    override: false
 
 exporters:
   zharp:
     api_key: "${env:ZHARP_API_KEY}"
+    endpoint: "${env:ZHARP_ENDPOINT:-https://api.zharp.io/api/v1}"
+  # Applications' traces and logs, forwarded unchanged to Zharp's OTLP ingest (<API>/otlp) with
+  # the same key. Batches are gzipped, queued and retried while Zharp is unreachable.
+  otlp_http/zharp:
+    endpoint: "${env:ZHARP_ENDPOINT:-https://api.zharp.io/api/v1}/otlp"
+    headers:
+      Authorization: "Bearer ${env:ZHARP_API_KEY}"
+    compression: gzip
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
 
 service:
   extensions: [health_check]
@@ -65,9 +88,11 @@ service:
     #   receivers: [filelog]
     #   processors: [memory_limiter, resourcedetection, batch]
     #   exporters: [zharp]
-    # Uncomment when you add otlp above. No resourcedetection here — the application already
-    # declares its own service.name, and host detection would overwrite it.
-    # traces:
-    #   receivers: [otlp]
-    #   processors: [memory_limiter, batch]
-    #   exporters: [zharp]
+    traces/otlp:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection/otlp, batch]
+      exporters: [otlp_http/zharp]
+    logs/otlp:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection/otlp, batch]
+      exporters: [otlp_http/zharp]

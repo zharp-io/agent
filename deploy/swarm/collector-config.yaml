@@ -47,6 +47,12 @@ processors:
   resourcedetection:
     detectors: [system, docker, env]
     timeout: 5s
+  # The Docker host's attributes (host.name, os.type) on what applications send over OTLP.
+  # override: false keeps what the application set itself — its service.name above all.
+  resourcedetection/otlp:
+    detectors: [system, docker]
+    timeout: 5s
+    override: false
 
   # Exclude/mask rules for every log record and the built-in masks (card numbers, bearer
   # tokens, JWTs, AWS keys, private keys). Add rules here:
@@ -60,19 +66,35 @@ processors:
 exporters:
   zharp:
     api_key: "${env:ZHARP_API_KEY}"
+  # Applications' OTLP traces and logs, forwarded unchanged to Zharp's OTLP ingest with the same
+  # key. Set ZHARP_ENDPOINT (e.g. https://zharp.example.com/api/v1) for self-hosted Zharp.
+  otlp_http/zharp:
+    endpoint: "${env:ZHARP_ENDPOINT:-https://api.zharp.io/api/v1}/otlp"
+    headers:
+      Authorization: "Bearer ${env:ZHARP_API_KEY}"
+    compression: gzip
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
 
 service:
   extensions: [health_check]
   pipelines:
     logs:
-      receivers: [docker_logs, otlp]
+      receivers: [docker_logs]
       processors: [memory_limiter, zharp_logs, resourcedetection, batch]
       exporters: [zharp]
     metrics:
       receivers: [hostmetrics, docker_stats, otlp]
       processors: [memory_limiter, resourcedetection, batch]
       exporters: [zharp]
-    traces:
+    # OpenTelemetry from applications, sent on as OTLP (Application Monitoring).
+    traces/otlp:
       receivers: [otlp]
-      processors: [memory_limiter, resourcedetection, batch]
-      exporters: [zharp]
+      processors: [memory_limiter, resourcedetection/otlp, batch]
+      exporters: [otlp_http/zharp]
+    logs/otlp:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection/otlp, batch]
+      exporters: [otlp_http/zharp]

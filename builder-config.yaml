@@ -7,6 +7,8 @@ dist:
 exporters:
   - gomod: github.com/zharp-io/agent/zharpexporter v0.0.1
     path: ./zharpexporter
+  # OpenTelemetry from applications on the host, forwarded unchanged to Zharp's OTLP ingest.
+  - gomod: go.opentelemetry.io/collector/exporter/otlphttpexporter v0.154.0
 
 receivers:
   - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.154.0

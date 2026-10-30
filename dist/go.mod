@@ -33,6 +33,7 @@ require (
 	go.opentelemetry.io/collector/confmap/provider/yamlprovider v1.60.0
 	go.opentelemetry.io/collector/connector v0.154.0
 	go.opentelemetry.io/collector/exporter v1.60.0
+	go.opentelemetry.io/collector/exporter/otlphttpexporter v0.154.0
 	go.opentelemetry.io/collector/extension v1.60.0
 	go.opentelemetry.io/collector/extension/zpagesextension v0.154.0
 	go.opentelemetry.io/collector/otelcol v0.154.0
@@ -48,6 +49,10 @@ require (
 require (
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/kubelet v0.154.0 // indirect
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/sharedcomponent v0.154.0 // indirect
+	go.opentelemetry.io/collector/config/configretry v1.60.0 // indirect
+	go.opentelemetry.io/collector/consumer/consumererror/xconsumererror v0.154.0 // indirect
+	go.opentelemetry.io/collector/exporter/exporterhelper v0.154.0 // indirect
+	go.opentelemetry.io/collector/exporter/exporterhelper/xexporterhelper v0.154.0 // indirect
 	k8s.io/kubelet v0.35.4 // indirect
 )
 

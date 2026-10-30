@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -41,7 +42,7 @@ func planAutomaticWith(detected []ServiceOption, appLogs bool) autoPlan {
 		tracing:          true,
 		inventory: []InventoryItem{
 			{Type: "host", Label: "Host metrics", Status: invCollecting, Detail: "CPU, memory, disk, network and load"},
-			{Type: "apm", Label: "Application traces", Status: invCollecting, Detail: "OpenTelemetry on 127.0.0.1:4317 (gRPC) and :4318 (HTTP)"},
+			apmInventoryItem(),
 		},
 	}
 
@@ -222,4 +223,28 @@ func redisProbe(addr string) redisState {
 		return redisNeedsPassword
 	}
 	return redisDown
+}
+
+// withoutOTLP leaves the OTLP receiver out (--no-otlp).
+func (p *autoPlan) withoutOTLP() {
+	p.tracing = false
+	var keep []InventoryItem
+	for _, it := range p.inventory {
+		if it.Type != "apm" {
+			keep = append(keep, it)
+		}
+	}
+	p.inventory = keep
+}
+
+// otlpDisabled is --no-otlp or ZHARP_NO_OTLP set to a true value.
+func otlpDisabled(flagSet bool) bool {
+	if flagSet {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ZHARP_NO_OTLP"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }

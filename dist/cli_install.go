@@ -29,10 +29,12 @@ func cliInstall() {
 	yes := fs.Bool("yes", false, "set up everything that needs no password, without asking")
 	fs.BoolVar(yes, "y", false, "shorthand for --yes")
 	noAppLogsFlag := fs.Bool("no-app-logs", false, "don't collect application logs (Docker containers, systemd services, PM2) (or ZHARP_NO_APP_LOGS=1)")
+	noOTLPFlag := fs.Bool("no-otlp", false, "don't receive OpenTelemetry traces and logs from applications on 127.0.0.1:4317/4318 (or ZHARP_NO_OTLP=1)")
 	installRuleFlags(fs)
 	_ = fs.Parse(os.Args[2:])
 	applyRuleEnv()
 	noAppLogs := appLogsDisabled(*noAppLogsFlag)
+	noOTLP := otlpDisabled(*noOTLPFlag)
 
 	presetKey := firstNonEmpty(*keyFlag, os.Getenv("ZHARP_API_KEY"))
 	endpoint := strings.TrimRight(firstNonEmpty(*endpointFlag, os.Getenv("ZHARP_ENDPOINT")), "/")
@@ -46,7 +48,7 @@ func cliInstall() {
 	}
 
 	if presetKey != "" && (*yes || !isTerminal(os.Stdin)) {
-		installUnattended(presetKey, endpoint, noAppLogs)
+		installUnattended(presetKey, endpoint, noAppLogs, noOTLP)
 		return
 	}
 
@@ -101,7 +103,8 @@ func cliInstall() {
 		"ZHARP_API_KEY": apiKey,
 	}
 	hasDocker := false
-	tracing := false
+	// Applications' OpenTelemetry traces and logs are received on localhost unless --no-otlp.
+	tracing := !noOTLP
 	var configured []InventoryItem
 
 	for {
@@ -189,21 +192,6 @@ func cliInstall() {
 
 		fmt.Println()
 		fmt.Printf("  %sConfiguring: %s%s\n", colBold, selected.Label, colReset)
-		if selected.Type == "apm" {
-			doneTypes[selected.Type] = true
-			tracing = true
-			uiOK("Applications can send traces to 127.0.0.1:4318 (HTTP) or 127.0.0.1:4317 (gRPC).")
-			uiDimMsg("Point your OpenTelemetry SDK at that endpoint — no API key needed, the collector already has one.")
-
-			fmt.Println()
-			more := strings.TrimSpace(uiAsk("Monitor another service? [Y/n]:"))
-			if strings.EqualFold(more, "n") {
-				break
-			}
-			fmt.Println()
-			continue
-		}
-
 		if isAppLogType(selected.Type) {
 			doneTypes[selected.Type] = true
 			r, items, ok := configureAppLogs(selected.Type)
@@ -254,7 +242,9 @@ func cliInstall() {
 	// Detected but skipped stays visible in the dashboard, so it can be set up later.
 	inventory := []InventoryItem{{Type: "host", Label: "Host metrics", Status: invCollecting, Detail: "CPU, memory, disk, network and load"}}
 	if tracing {
-		inventory = append(inventory, InventoryItem{Type: "apm", Label: "Application traces", Status: invCollecting, Detail: "OpenTelemetry on 127.0.0.1:4317 (gRPC) and :4318 (HTTP)"})
+		inventory = append(inventory, apmInventoryItem())
+		uiOK("Applications can send OpenTelemetry traces and logs to 127.0.0.1:4318 (HTTP) or 127.0.0.1:4317 (gRPC).")
+		uiDimMsg("The collector forwards them to Zharp with its own API key. Leave it out with --no-otlp.")
 	}
 	inventory = append(inventory, configured...)
 	for _, d := range detected {
@@ -269,15 +259,18 @@ func cliInstall() {
 	}
 	finishInstall(buildConfig(configSpec{
 		metricsReceivers: metricsReceivers, receiverBlocks: receiverBlocks, logSources: logSources,
-		logReceivers: logReceivers, tracing: tracing, endpoint: endpoint, noAppLogs: noAppLogs,
+		logReceivers: logReceivers, tracing: tracing, endpoint: endpoint, noAppLogs: noAppLogs, noOTLP: noOTLP,
 	}), allEnvVars, hasDocker, inventory, true)
 }
 
 // installUnattended is the no-questions install: detect, set up what needs no password, start.
-func installUnattended(apiKey, endpoint string, noAppLogs bool) {
+func installUnattended(apiKey, endpoint string, noAppLogs, noOTLP bool) {
 	fmt.Println()
 	uiInfo("Scanning this server...")
 	plan := planAutomaticWith(detectServices(), !noAppLogs)
+	if noOTLP {
+		plan.withoutOTLP()
+	}
 	plan.envVars["ZHARP_API_KEY"] = apiKey
 
 	for _, item := range plan.inventory {
@@ -291,10 +284,13 @@ func installUnattended(apiKey, endpoint string, noAppLogs bool) {
 	if noAppLogs {
 		uiDimMsg("Application logs (Docker containers, systemd services, PM2) left out: --no-app-logs")
 	}
+	if noOTLP {
+		uiDimMsg("OpenTelemetry from applications (127.0.0.1:4317/4318) left out: --no-otlp")
+	}
 
 	finishInstall(buildConfig(configSpec{
 		metricsReceivers: plan.metricsReceivers, receiverBlocks: plan.receiverBlocks, logSources: plan.logSources,
-		logReceivers: plan.logReceivers, tracing: plan.tracing, endpoint: endpoint, noAppLogs: noAppLogs,
+		logReceivers: plan.logReceivers, tracing: plan.tracing, endpoint: endpoint, noAppLogs: noAppLogs, noOTLP: noOTLP,
 	}), plan.envVars, plan.hasDocker, plan.inventory, false)
 }
 

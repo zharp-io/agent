@@ -15,7 +15,7 @@ The **Zharp Collector** is an OpenTelemetry-based agent that ships logs and metr
 | MySQL / MariaDB | Connections, queries, InnoDB buffer pool, table I/O |
 | Redis | Memory, connected clients, keyspace hits/misses, command stats |
 | MongoDB | Connections, operations, document counts, replication lag |
-| Any OTLP app | Traces, metrics, logs via gRPC `:4317` or HTTP `:4318` |
+| Any OTLP app | Traces and logs via gRPC `127.0.0.1:4317` or HTTP `127.0.0.1:4318`, forwarded to Zharp Application Monitoring as OTLP |
 
 ---
 
@@ -198,6 +198,25 @@ aws ecs create-service \
 ```
 
 > **Fargate / Lambda / Render / Railway / Vercel** — these platforms don't expose the host filesystem so the agent cannot be installed. Collect logs from these environments through the **Integrations** section in your Zharp dashboard instead.
+
+---
+
+## Applications (OpenTelemetry)
+
+Every install receives OpenTelemetry from applications on the same host, on **127.0.0.1:4317** (gRPC) and **127.0.0.1:4318** (HTTP). Point a Zharp SDK or any OpenTelemetry SDK at it — no API key is needed in the app:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+OTEL_SERVICE_NAME=checkout-api
+```
+
+The collector forwards traces and logs unchanged, as OTLP, to Zharp's OTLP ingest (`<endpoint>/otlp`, `https://api.zharp.io/api/v1/otlp` on Zharp Cloud) with its own API key. It adds the host's `host.name` and `os.type` (never replacing what the app set), batches, gzips, and queues and retries while Zharp is unreachable. `service.name` picks the application in Zharp; a new one shows up as a discovered app.
+
+The ports are bound to localhost because traces carry URLs, queries and error messages. The collector's own sources — log files, containers, the journal, metrics — are unaffected and still go to the Logs and Infrastructure pages.
+
+**Turning it off:** install with `--no-otlp` (or `ZHARP_NO_OTLP=1`, also read by `setup.ps1`). That's noted at the top of the config so `update` doesn't add it back. On an existing install, remove the `otlp` receiver and the `traces/otlp` and `logs/otlp` pipelines from `config.yaml`, add the line ``## OTLP receiver left out (--no-otlp); `zharp-collector update` keeps it out.`` at the top, and restart the service.
+
+**Updating from an older version:** `zharp-collector update` adds the receiver, the `otlp_http/zharp` exporter and the two pipelines; the old `traces` pipeline (spans through the `zharp` exporter) is replaced by `traces/otlp`. A traces pipeline you edited yourself is left as it is and reported.
 
 ---
 

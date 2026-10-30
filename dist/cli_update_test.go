@@ -195,7 +195,7 @@ func TestMergeAddsOnlyWhatIsMissing(t *testing.T) {
 			t.Errorf("missing %q in\n%s", want, after)
 		}
 	}
-	if strings.Count(after, "    traces:\n") != 1 {
+	if strings.Count(after, "    traces/otlp:\n") != 1 || strings.Contains(after, "    traces:\n") {
 		t.Error("traces pipeline duplicated")
 	}
 
@@ -318,7 +318,7 @@ func TestMergeAddsTracingAndLogsPipelineToOldConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"\n  otlp:\n", "    traces:\n", "      receivers: [journald]\n      processors: [memory_limiter, zharp_logs, resourcedetection, batch]\n"} {
+	for _, want := range []string{"\n  otlp:\n", "    traces/otlp:\n", "    logs/otlp:\n", "\n  otlp_http/zharp:\n","      receivers: [journald]\n      processors: [memory_limiter, zharp_logs, resourcedetection, batch]\n"} {
 		if !strings.Contains(res.config, want) {
 			t.Errorf("missing %q:\n%s", want, res.config)
 		}
@@ -636,7 +636,7 @@ func TestReceiverLabels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(receiverLabels(rs), ", "); got != "Host metrics, myapp logs, Application traces, PostgreSQL" {
+	if got := strings.Join(receiverLabels(rs), ", "); got != "Host metrics, myapp logs, Application traces and logs, PostgreSQL" {
 		t.Errorf("labels: %s", got)
 	}
 }

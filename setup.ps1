@@ -10,6 +10,9 @@
 #   Set-ExecutionPolicy Bypass -Scope Process -Force
 #   .\setup.ps1
 #
+# Applications on the machine can send OpenTelemetry traces and logs to 127.0.0.1:4318 (HTTP) or
+# :4317 (gRPC); the collector forwards them to Zharp. $env:ZHARP_NO_OTLP="1" leaves that out.
+#
 # On a machine where the collector is already set up (its config exists) it updates instead: the
 # binary is replaced and `zharp-collector update --apply` adds what the new version detects,
 # keeping the config, API key and everything already collected. No API key is needed then.

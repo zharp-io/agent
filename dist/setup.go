@@ -179,16 +179,21 @@ func writeConfig(f *os.File, apiKey string, metricsReceivers []string, extraBloc
 	for _, b := range extraBlocks {
 		w(b + "\n")
 	}
+	// Applications' OpenTelemetry traces and logs, forwarded to Zharp's OTLP ingest.
+	w(otlpReceiverBlock)
 
 	w("\nprocessors:\n")
 	w("  batch:\n    send_batch_size: 500\n    timeout: 5s\n")
 	w("  memory_limiter:\n    limit_mib: 128\n    spike_limit_mib: 32\n    check_interval: 5s\n")
 	w("  resourcedetection:\n    detectors: [system, env]\n    timeout: 5s\n")
+	w(otlpProcessorBlock)
 
 	w("\nexporters:\n")
 	fmt.Fprintf(f, "  zharp:\n    api_key: \"%s\"\n", apiKey)
+	w(otlpExporterBlock("", apiKey))
 
 	w("\nservice:\n  extensions: [health_check]\n  pipelines:\n")
+	w(otlpPipelinesBlock)
 	fmt.Fprintf(f, "    metrics:\n      receivers: [%s]\n", strings.Join(metricsReceivers, ", "))
 	w("      processors: [memory_limiter, resourcedetection, batch]\n")
 	w("      exporters: [zharp]\n")

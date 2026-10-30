@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -229,12 +230,19 @@ func mergeSources(content string, inventory []InventoryItem, detected []ServiceO
 		res.config = ensureLogRules(res.config)
 	}
 
-	// Application traces on localhost, as every install since traces has had.
-	if plan.tracing && !ex.has("otlp") {
-		res.config = addTracing(res.config)
-		addedTypes["apm"] = true
-	} else {
-		skip["apm"] = true
+	// Applications' OpenTelemetry traces and logs on localhost, forwarded to Zharp's OTLP ingest,
+	// as every install has them — unless it was installed with --no-otlp.
+	skip["apm"] = true
+	if plan.tracing && !strings.Contains(content, noOTLPMarker) {
+		next, note := addOTLPPassthrough(res.config)
+		if note != "" {
+			res.notAdded = append(res.notAdded, note)
+		}
+		if next != res.config {
+			res.config = next
+			addedTypes["apm"] = true
+			skip["apm"] = false
+		}
 	}
 
 	pm2Setup := false
@@ -275,7 +283,7 @@ func backfillInventory(items []InventoryItem, have []configReceiver) []Inventory
 		case base == "hostmetrics":
 			add(InventoryItem{Type: "host", Label: "Host metrics", Status: invCollecting, Detail: "CPU, memory, disk, network and load"})
 		case base == "otlp":
-			add(InventoryItem{Type: "apm", Label: "Application traces", Status: invCollecting, Detail: "OpenTelemetry on 127.0.0.1:4317 (gRPC) and :4318 (HTTP)"})
+			add(apmInventoryItem())
 		case dbTypes[base] != "":
 			it := inventoryFor(dbTypes[base])
 			if name != "" {
@@ -339,13 +347,68 @@ func withoutInventoryType(items []InventoryItem, typ string) []InventoryItem {
 	return keep
 }
 
-// addTracing adds the OTLP receiver and the traces pipeline.
-func addTracing(content string) string {
-	content = strings.Replace(content, "\nprocessors:", "\n"+strings.TrimRight(otlpReceiverBlock, "\n")+"\n\nprocessors:", 1)
-	if i := strings.Index(content, "\n    metrics:\n"); i >= 0 {
-		return content[:i+1] + tracesPipelineBlock + content[i+1:]
+// tracesPipelineRe finds a pipeline named plain "traces".
+var tracesPipelineRe = regexp.MustCompile(`(?m)^[ \t]+traces:[ \t]*\r?$`)
+
+// addOTLPPassthrough makes a config forward what applications send over OTLP to Zharp's OTLP
+// ingest: the OTLP receiver (when missing), the host-attributes processor, the otlphttp exporter
+// and the traces/otlp and logs/otlp pipelines. The traces pipeline older installs wrote — spans
+// through the zharp exporter — is the one thing it replaces: left in place, every span would go
+// out twice. A traces pipeline someone wrote themselves is left alone, and then nothing is added;
+// the note says why.
+func addOTLPPassthrough(content string) (string, string) {
+	if strings.Contains(content, "\n  "+otlpExporterID+":") {
+		return content, "" // already forwarding
 	}
-	return strings.Replace(content, "\n  pipelines:\n", "\n  pipelines:\n"+tracesPipelineBlock, 1)
+	legacy := strings.Contains(content, legacyTracesPipelineBlock)
+	if !legacy && tracesPipelineRe.MatchString(content) {
+		return content, "Application traces and logs: this config has its own traces pipeline, left as it is. " +
+			"To forward OpenTelemetry to Zharp, add the " + otlpExporterID + " exporter and the traces/otlp and logs/otlp pipelines (see collector-config.yaml in the agent's repository)"
+	}
+	api, apiKey := zharpExporterSettings(content)
+	if !strings.Contains(content, "\nservice:") || !strings.Contains(content, "\nprocessors:\n") || apiKey == "" {
+		return content, ""
+	}
+
+	hasOTLP := false
+	if have, err := configReceivers(content); err == nil {
+		for _, r := range have {
+			hasOTLP = hasOTLP || r.ID == "otlp"
+		}
+	}
+	if !hasOTLP {
+		content = strings.Replace(content, "\nprocessors:", "\n"+strings.TrimRight(otlpReceiverBlock, "\n")+"\n\nprocessors:", 1)
+	}
+	if !strings.Contains(content, "\n  "+otlpProcessorID+":") {
+		content = strings.Replace(content, "\nprocessors:\n", "\nprocessors:\n"+otlpProcessorBlock, 1)
+	}
+	// The exporters section is the one before service in every config install writes.
+	content = strings.Replace(content, "\nservice:", otlpExporterBlock(api, apiKey)+"\nservice:", 1)
+
+	if legacy {
+		return strings.Replace(content, legacyTracesPipelineBlock, otlpPipelinesBlock, 1), ""
+	}
+	if i := strings.Index(content, "\n    metrics:\n"); i >= 0 {
+		return content[:i+1] + otlpPipelinesBlock + content[i+1:], ""
+	}
+	return strings.Replace(content, "\n  pipelines:\n", "\n  pipelines:\n"+otlpPipelinesBlock, 1), ""
+}
+
+// zharpExporterSettings reads the zharp exporter's endpoint and api_key as written in content
+// (the key usually as ${env:ZHARP_API_KEY}), so the OTLP exporter sends to the same Zharp with
+// the same key.
+func zharpExporterSettings(content string) (endpoint, apiKey string) {
+	var cfg struct {
+		Exporters map[string]struct {
+			Endpoint string `yaml:"endpoint"`
+			APIKey   string `yaml:"api_key"`
+		} `yaml:"exporters"`
+	}
+	if err := yaml.Unmarshal([]byte(content), &cfg); err != nil {
+		return "", ""
+	}
+	z := cfg.Exporters["zharp"]
+	return z.Endpoint, z.APIKey
 }
 
 // receiverLabels names what a config collects, for the summary.
@@ -353,7 +416,7 @@ func receiverLabels(rs []configReceiver) []string {
 	names := map[string]string{
 		"hostmetrics": "Host metrics", "postgresql": "PostgreSQL", "mysql": "MySQL / MariaDB",
 		"redis": "Redis", "mongodb": "MongoDB", "docker_stats": "Docker", "docker_logs": "Docker container logs",
-		"journald": "Service logs (journal)", "otlp": "Application traces",
+		"journald": "Service logs (journal)", "otlp": "Application traces and logs",
 	}
 	seen := map[string]bool{}
 	var out []string

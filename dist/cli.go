@@ -81,6 +81,7 @@ func cliHelp() {
 	fmt.Println()
 	fmt.Println("  Subcommands:")
 	fmt.Println("    install              Guided setup — installs config and system service")
+	fmt.Println("                         (receives OpenTelemetry on 127.0.0.1:4317/4318 unless --no-otlp)")
 	fmt.Println("    add <type> [flags]   Add a monitoring target to the running config")
 	fmt.Println("    update [--check]     Update to the latest release and add what it newly detects")
 	fmt.Println("                         (--version vX.Y.Z to pin one; nothing configured is removed)")

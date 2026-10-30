@@ -60,12 +60,20 @@ type configSpec struct {
 	receiverBlocks   []string      // raw YAML blocks for the metric receivers
 	logSources       []LogSource   // files tailed by filelog/<name>
 	logReceivers     []LogReceiver // other log receivers: docker_logs, journald, filelog/pm2
-	tracing          bool
+	tracing          bool          // the OTLP receiver and the pipelines forwarding it to Zharp's OTLP ingest
 	endpoint         string
 	noAppLogs        bool // installed with --no-app-logs: noted in the header so `update` keeps them out
+	noOTLP           bool // installed with --no-otlp: noted in the header so `update` keeps it out
 }
 
-// The OTLP receiver applications send traces to, and the pipeline that forwards them.
+// The OTLP receiver applications on this host send to, and the pipelines that forward what it
+// receives to Zharp's OTLP ingest unchanged.
+//
+// Traces and logs from an OpenTelemetry SDK go out as OTLP through the standard otlphttp
+// exporter, not through the zharp exporter's JSON: the SDK already speaks the format Zharp's
+// application monitoring reads, so the agent only adds the host's attributes, batches and
+// retries. The agent's own sources (log files, containers, the journal, metrics) keep going to
+// the /agent/* endpoints through the zharp exporter.
 const (
 	otlpReceiverBlock = "  otlp:\n" +
 		"    protocols:\n" +
@@ -73,17 +81,76 @@ const (
 		"        endpoint: 127.0.0.1:4317\n" +
 		"      http:\n" +
 		"        endpoint: 127.0.0.1:4318\n"
-	tracesPipelineBlock = "    traces:\n      receivers: [otlp]\n" +
+
+	// otlpProcessorID adds host.name and os.type. override: false keeps what the application
+	// set itself — service.name above all, which the env detector could otherwise replace with
+	// the collector's own.
+	otlpProcessorID    = "resourcedetection/otlp"
+	otlpProcessorBlock = "  " + otlpProcessorID + ":\n" +
+		"    detectors: [system]\n" +
+		"    timeout: 5s\n" +
+		"    override: false\n"
+
+	otlpExporterID = "otlp_http/zharp"
+
+	otlpPipelinesBlock = "    traces/otlp:\n      receivers: [otlp]\n" +
+		"      processors: [memory_limiter, " + otlpProcessorID + ", batch]\n" +
+		"      exporters: [" + otlpExporterID + "]\n" +
+		"    logs/otlp:\n      receivers: [otlp]\n" +
+		"      processors: [memory_limiter, " + otlpProcessorID + ", batch]\n" +
+		"      exporters: [" + otlpExporterID + "]\n"
+
+	// legacyTracesPipelineBlock is the traces pipeline installs wrote before the OTLP
+	// passthrough: spans through the zharp exporter to /agent/traces. `update` replaces it.
+	legacyTracesPipelineBlock = "    traces:\n      receivers: [otlp]\n" +
 		"      processors: [memory_limiter, batch]\n" +
 		"      exporters: [zharp]\n"
 )
 
+// defaultAPIEndpoint is the Zharp API the zharp exporter uses when the config names none.
+const defaultAPIEndpoint = "https://api.zharp.io/api/v1"
+
+// otlpEndpointFor is Zharp's OTLP ingest for the API the agent is configured with
+// (https://api.zharp.io/api/v1 → https://api.zharp.io/api/v1/otlp). otlphttp appends
+// /v1/traces and /v1/logs to it.
+func otlpEndpointFor(api string) string {
+	api = strings.TrimRight(strings.TrimSpace(api), "/")
+	if api == "" {
+		api = defaultAPIEndpoint
+	}
+	return api + "/otlp"
+}
+
+// apiKeyRef is how generated configs read the API key: from the service's environment.
+const apiKeyRef = "${env:ZHARP_API_KEY}"
+
+// otlpExporterBlock is the otlphttp exporter forwarding to Zharp's OTLP ingest, authenticated
+// with the agent's own API key. Batches are gzipped, held in a queue and retried with backoff
+// while Zharp is unreachable or answers 429/503.
+func otlpExporterBlock(api, apiKey string) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "  %s:\n", otlpExporterID)
+	fmt.Fprintf(&sb, "    endpoint: %q\n", otlpEndpointFor(api))
+	sb.WriteString("    headers:\n")
+	fmt.Fprintf(&sb, "      Authorization: %q\n", "Bearer "+apiKey)
+	sb.WriteString("    compression: gzip\n")
+	sb.WriteString("    retry_on_failure:\n")
+	sb.WriteString("      enabled: true\n")
+	sb.WriteString("    sending_queue:\n")
+	sb.WriteString("      enabled: true\n")
+	return sb.String()
+}
+
 // noAppLogsMarker is the header line of a config installed with --no-app-logs.
 const noAppLogsMarker = "## Application logs left out (--no-app-logs); `zharp-collector update` keeps them out.\n"
 
+// noOTLPMarker is the header line of a config installed with --no-otlp.
+const noOTLPMarker = "## OTLP receiver left out (--no-otlp); `zharp-collector update` keeps it out.\n"
+
 // buildConfig generates the collector config for spec.
 func buildConfig(spec configSpec) string {
-	metricsReceivers, receiverBlocks, logSources, tracing, endpoint := spec.metricsReceivers, spec.receiverBlocks, spec.logSources, spec.tracing, spec.endpoint
+	metricsReceivers, receiverBlocks, logSources, endpoint := spec.metricsReceivers, spec.receiverBlocks, spec.logSources, spec.endpoint
+	tracing := spec.tracing && !spec.noOTLP
 	storage := false
 	for _, r := range spec.logReceivers {
 		storage = storage || r.Storage
@@ -95,6 +162,9 @@ func buildConfig(spec configSpec) string {
 	sb.WriteString("## Edit this file then restart the service to apply changes.\n")
 	if spec.noAppLogs {
 		sb.WriteString(noAppLogsMarker)
+	}
+	if spec.noOTLP {
+		sb.WriteString(noOTLPMarker)
 	}
 	sb.WriteString("\n")
 
@@ -133,9 +203,9 @@ func buildConfig(spec configSpec) string {
 		sb.WriteString(r.Block)
 	}
 
-	// OTLP receiver — the port applications send their traces to. Bound to localhost by
-	// default because a trace carries request URLs, query text and error messages; opening it
-	// to the network is a decision to make deliberately, not one to inherit from an installer.
+	// OTLP receiver — the port applications send their traces and logs to. Bound to
+	// localhost by default because a trace carries request URLs, query text and error messages;
+	// opening it to the network is a decision to make deliberately, not one to inherit from an installer.
 	if tracing {
 		sb.WriteString(otlpReceiverBlock)
 	}
@@ -159,6 +229,9 @@ func buildConfig(spec configSpec) string {
 	sb.WriteString("  resourcedetection:\n")
 	sb.WriteString("    detectors: [system, env]\n")
 	sb.WriteString("    timeout: 5s\n")
+	if tracing {
+		sb.WriteString(otlpProcessorBlock)
+	}
 	// Exclude/mask rules and the built-in masks, for every log source.
 	sb.WriteString(rulesProcessorBlock(installRules))
 
@@ -170,6 +243,9 @@ func buildConfig(spec configSpec) string {
 	}
 	// What this host was found running, sent with each heartbeat so the dashboard can show it.
 	fmt.Fprintf(&sb, "    inventory_file: %q\n", installInventoryFile())
+	if tracing {
+		sb.WriteString(otlpExporterBlock(endpoint, apiKeyRef))
+	}
 
 	sb.WriteString("\nservice:\n")
 	if storage {
@@ -193,11 +269,11 @@ func buildConfig(spec configSpec) string {
 		sb.WriteString("      exporters: [zharp]\n")
 	}
 
-	// Traces pipeline. resourcedetection is deliberately absent: an application already declares
-	// its own service.name, and letting host detection overwrite it would merge every service on
-	// the box into one.
+	// Traces and logs from applications' OpenTelemetry SDKs, forwarded as OTLP. Not through the
+	// shared resourcedetection: its env detector may set service.name, and replacing the one each
+	// application declares would merge every service on the box into one.
 	if tracing {
-		sb.WriteString(tracesPipelineBlock)
+		sb.WriteString(otlpPipelinesBlock)
 	}
 
 	// Metrics pipeline.
