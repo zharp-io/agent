@@ -188,7 +188,8 @@ func (e *zharpLogsExporter) ship(ctx context.Context, batch []logEntry) error {
 		return fmt.Errorf("zharpexporter: marshal failed: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/agent/logs/%s", e.cfg.baseURL(), e.cfg.APIKey)
+	// The key goes in the X-API-KEY header only: a path is written into every proxy's access log.
+	url := e.cfg.baseURL() + "/agent/logs"
 	req, err := newRequest(ctx, url, bytes.NewReader(body), e.cfg.APIKey)
 	if err != nil {
 		return err

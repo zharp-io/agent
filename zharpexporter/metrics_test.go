@@ -25,12 +25,16 @@ func (r *recorder) server(t *testing.T) *httptest.Server {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
+		// The key is in the header, never in the path, where access logs would keep it.
+		if req.Header.Get("X-API-KEY") == "" || strings.Contains(req.URL.Path, "zh_") {
+			t.Errorf("key must travel in the header only: %s", req.URL.Path)
+		}
 		switch {
-		case strings.Contains(req.URL.Path, "/agent/metrics/"):
+		case strings.HasSuffix(req.URL.Path, "/agent/metrics"):
 			var p metricsPayload
 			_ = json.NewDecoder(req.Body).Decode(&p)
 			r.payloads = append(r.payloads, p)
-		case strings.Contains(req.URL.Path, "/agent/heartbeat/"):
+		case strings.HasSuffix(req.URL.Path, "/agent/heartbeat"):
 			r.heartbeats++
 		}
 	}))

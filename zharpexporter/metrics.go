@@ -97,7 +97,7 @@ func (e *zharpMetricsExporter) sendHeartbeat(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	url := fmt.Sprintf("%s/agent/heartbeat/%s", e.cfg.baseURL(), e.cfg.APIKey)
+	url := e.cfg.baseURL() + "/agent/heartbeat" // the key travels in the X-API-KEY header
 	req, err := newRequest(ctx, url, bytes.NewReader(body), e.cfg.APIKey)
 	if err != nil {
 		e.logger.Debug("heartbeat: create request failed", zap.Error(err))
@@ -141,7 +141,7 @@ func (e *zharpMetricsExporter) shipMetrics(ctx context.Context, batch []metricPo
 		return fmt.Errorf("zharpexporter: marshal metrics: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/agent/metrics/%s", e.cfg.baseURL(), e.cfg.APIKey)
+	url := e.cfg.baseURL() + "/agent/metrics" // the key travels in the X-API-KEY header
 	req, err := newRequest(ctx, url, bytes.NewReader(body), e.cfg.APIKey)
 	if err != nil {
 		return err
