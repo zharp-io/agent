@@ -113,6 +113,8 @@ type mergeResult struct {
 	migrated  []string        // changes to what is already collected, to the current layout
 	docker    bool            // the collector's user needs the Docker socket
 	stateDir  bool            // a new receiver keeps positions in the state directory
+	// receivers given more files: their saved positions are dropped before the restart
+	resetPositions []string
 }
 
 // mergeSources adds to content what planAutomatic would set up for detected and isn't there yet.
@@ -142,7 +144,9 @@ func mergeSources(content string, inventory []InventoryItem, detected []ServiceO
 		if isAppLogType(d.Type) && !appLogs {
 			continue
 		}
-		if id, ok := updateTypeReceivers[d.Type]; ok && ex.has(id) {
+		// PM2 is asked again even when collected: apps started since, or logging to their own
+		// files, join its receiver. The rest stay as they are once collected.
+		if id, ok := updateTypeReceivers[d.Type]; ok && ex.has(id) && d.Type != "pm2" {
 			continue
 		}
 		if optedOut[d.Type] {
@@ -219,7 +223,19 @@ func mergeSources(content string, inventory []InventoryItem, detected []ServiceO
 
 	// Application logs: containers, the journal, PM2.
 	for _, r := range plan.logReceivers {
+		existed, changed := receiverChanged(res.config, r)
+		if existed && !changed {
+			continue // found again, collected as it is
+		}
 		res.config = addLogReceiverContent(res.config, r)
+		if existed {
+			if r.Storage {
+				res.resetPositions = append(res.resetPositions, r.ID)
+			}
+			res.migrated = append(res.migrated, changedReceiverNote(r.ID, plan.inventory))
+			logs = true
+			continue
+		}
 		res.stateDir = res.stateDir || r.Storage || r.ID == "docker_logs"
 		res.docker = res.docker || r.ID == "docker_logs"
 		switch r.ID {
@@ -730,6 +746,9 @@ func applyUpdate(p updatePaths, opts applyOptions, now time.Time) (applyOutcome,
 			out.res.added, out.res.inventory = nil, inventory
 			return out, nil
 		}
+		for _, id := range res.resetPositions {
+			forgetReadPositions(id)
+		}
 	}
 	if out.inventoryChanged {
 		if err := writeInventoryTo(p.inventory, res.inventory); err != nil {
@@ -867,6 +886,22 @@ func printUpdateSummary(out applyOutcome, opts applyOptions) {
 		uiDimMsg("Backups: " + strings.Join(out.backups, ", "))
 	}
 	fmt.Println()
+}
+
+// changedReceiverNote is the summary line for a receiver update gave more files ("PM2 app logs:
+// now api, worker").
+func changedReceiverNote(id string, inventory []InventoryItem) string {
+	for typ, rid := range updateTypeReceivers {
+		if rid != id {
+			continue
+		}
+		for _, it := range inventory {
+			if it.Type == typ && it.Status == invCollecting {
+				return it.Label + ": now " + it.Detail
+			}
+		}
+	}
+	return id + ": updated"
 }
 
 // addedDetail shortens an inventory detail for the summary ("2 apps: api, worker" for PM2).

@@ -221,6 +221,33 @@ func pm2ReceiverWith(dirs []string, apps []pm2App) LogReceiver {
 	return LogReceiver{ID: "filelog/pm2", Block: sb.String(), Storage: true}
 }
 
+// receiverBlockOf is "  <id>:" and everything indented under it in content, or "" when absent.
+func receiverBlockOf(content, id string) string {
+	start := strings.Index(content, "\n  "+id+":\n")
+	if start < 0 {
+		return ""
+	}
+	removed := removeReceiverBlock(content, id)
+	return content[start : start+len(content)-len(removed)]
+}
+
+// receiverChanged reports whether r would replace a block of the same id, and whether it differs.
+func receiverChanged(content string, r LogReceiver) (existed, changed bool) {
+	old := receiverBlockOf(content, r.ID)
+	if old == "" {
+		return false, false
+	}
+	return true, strings.TrimSpace(old) != strings.TrimSpace(r.Block)
+}
+
+// forgetReadPositions drops the file positions a file receiver saved. Once a receiver has saved
+// any, the collector reads every file it doesn't know from the first line, so a receiver given
+// more files would replay their whole history. Without them each file starts at its current
+// end; files that appear later (a rotation) are still read in full. Tests replace it.
+var forgetReadPositions = func(id string) {
+	_ = os.Remove(filepath.Join(stateDir(), "storage", "receiver_"+strings.ReplaceAll(id, "/", "_")))
+}
+
 // pm2AppName is the service name a PM2 log file maps to ("" when it isn't a PM2 log).
 func pm2AppName(file string) string {
 	m := pm2FileRe.FindStringSubmatch(filepath.Base(file))

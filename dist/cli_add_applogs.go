@@ -32,6 +32,7 @@ func cliAddAppLogs(svcType, configFile string) {
 		fmt.Fprintf(os.Stderr, "  [!] %v\n", err)
 		os.Exit(1)
 	}
+	existed, changed := receiverChanged(string(data), r)
 	content := addLogReceiver(string(data), r)
 	if svcType == "journald" {
 		content = dropJournalOverlap(content, fileExists("/var/log/kern.log"))
@@ -41,6 +42,9 @@ func cliAddAppLogs(svcType, configFile string) {
 		os.Exit(1)
 	}
 	uiOK("Config updated → " + configFile)
+	if existed && changed && r.Storage {
+		forgetReadPositions(r.ID) // so files it now covers start at their end, not their first line
+	}
 
 	uiInfo("Restarting service to apply changes...")
 	if err := svcRestart(); err != nil {
