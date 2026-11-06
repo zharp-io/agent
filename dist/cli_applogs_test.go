@@ -203,3 +203,85 @@ func validateContent(t *testing.T, content string, withJournal bool) {
 	}
 	validateConfig(t, path)
 }
+
+func TestParsePM2List(t *testing.T) {
+	// `pm2 jlist` nests the paths under pm2_env and may print a warning first.
+	jlist := []byte("[PM2] Some warning\n" + `[{"name":"zharp-api","pm2_env":{"pm_out_log_path":"/srv/api/logs/out.log","pm_err_log_path":"/srv/api/logs/error.log"}}]`)
+	// dump.pm2, what `pm2 save` writes, has them at the top.
+	dump := []byte(`[{"name":"web","pm_out_log_path":"/home/a/.pm2/logs/web-out.log","pm_err_log_path":"/home/a/.pm2/logs/web-error.log"}]`)
+
+	got := parsePM2List(jlist)
+	if len(got) != 1 || got[0].Name != "zharp-api" || strings.Join(got[0].paths(), ",") != "/srv/api/logs/out.log,/srv/api/logs/error.log" {
+		t.Errorf("jlist: %+v", got)
+	}
+	got = parsePM2List(dump)
+	if len(got) != 1 || got[0].Name != "web" || got[0].paths()[0] != "/home/a/.pm2/logs/web-out.log" {
+		t.Errorf("dump: %+v", got)
+	}
+	if parsePM2List([]byte("not json")) != nil {
+		t.Error("garbage should give nil")
+	}
+}
+
+func TestPM2ReceiverNamesAppsWithTheirOwnLogFiles(t *testing.T) {
+	r := pm2ReceiverWith([]string{"/home/a/.pm2/logs"}, []pm2App{{Name: "zharp-api", Paths: []string{"/srv/api/logs/out.log", "/srv/api/logs/error.log"}}})
+	for _, want := range []string{
+		"'/home/a/.pm2/logs/*.log'",
+		"'/srv/api/logs/out.log'",
+		"'/srv/api/logs/error.log'",
+		"include_file_path: true",
+		`if: 'attributes["log.file.path"] in ["/srv/api/logs/out.log", "/srv/api/logs/error.log"]'`,
+		"value: 'zharp-api'",
+	} {
+		if !strings.Contains(r.Block, want) {
+			t.Errorf("block lacks %s:\n%s", want, r.Block)
+		}
+	}
+	// Without such apps the receiver is what it always was.
+	if r := pm2Receiver([]string{"/home/a/.pm2/logs"}); strings.Contains(r.Block, "log.file.path") || !strings.Contains(r.Block, "include_file_path: false") {
+		t.Errorf("plain receiver changed:\n%s", r.Block)
+	}
+}
+
+func TestPlanPM2GrantsAppLogFolders(t *testing.T) {
+	defer func(f func(string) error) { grantPM2Access = f }(grantPM2Access)
+	var granted []string
+	grantPM2Access = func(dir string) error {
+		if strings.Contains(dir, "locked") {
+			return errors.New("setfacl: Operation not supported")
+		}
+		granted = append(granted, dir)
+		return nil
+	}
+	o := planPM2(nil, []pm2App{
+		{Name: "api", Paths: []string{"/srv/api/logs/out.log", "/srv/api/logs/error.log"}},
+		{Name: "worker", Paths: []string{"/srv/locked/worker.log"}},
+	})
+	if len(o.apps) != 1 || o.apps[0].Name != "api" {
+		t.Errorf("readable apps: %+v", o.apps)
+	}
+	if strings.Join(granted, ",") != "/srv/api/logs" {
+		t.Errorf("granted once per folder: %v", granted)
+	}
+	if len(o.failed) != 1 || o.failed[0].Path != "/srv/locked" || !strings.Contains(o.commands, "locked") || !strings.Contains(o.commands, "add pm2") {
+		t.Errorf("failed: %+v, commands %q", o.failed, o.commands)
+	}
+	inv := pm2Inventory(o)
+	if inv[0].Status != invCollecting || inv[0].Detail != "api" || inv[1].Type != "pm2:setup" {
+		t.Errorf("inventory: %+v", inv)
+	}
+}
+
+func TestGeneratedConfigWithPM2AppFilesValidates(t *testing.T) {
+	stateDirOverride = t.TempDir()
+	defer func() { stateDirOverride = "" }()
+	dir := t.TempDir()
+	content := buildConfig(configSpec{
+		metricsReceivers: []string{"hostmetrics"},
+		logReceivers: []LogReceiver{pm2ReceiverWith(
+			[]string{filepath.Join(dir, ".pm2", "logs")},
+			[]pm2App{{Name: "zharp-api", Paths: []string{filepath.Join(dir, "api", "out.log"), filepath.Join(dir, "api", "error.log")}}},
+		)},
+	})
+	validateContent(t, content, false)
+}

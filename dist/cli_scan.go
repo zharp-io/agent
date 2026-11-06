@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -279,8 +280,10 @@ func detectAppLogs() []ServiceOption {
 	if journalAvailable() {
 		opts = append(opts, ServiceOption{Label: "Service logs (journal)", Type: "journald", Detail: "systemd services; operating-system units left out", Detected: true})
 	}
-	if dirs := findPM2Dirs(); len(dirs) > 0 {
-		opts = append(opts, ServiceOption{Label: "PM2 app logs", Type: "pm2", Detail: strings.Join(pm2Apps(dirs), ", "), Detected: true})
+	if dirs, apps := pm2DirsFn(), pm2CustomAppsFn(); len(dirs) > 0 || len(apps) > 0 {
+		names := append(pm2Apps(dirs), customAppNames(apps)...)
+		sort.Strings(names)
+		opts = append(opts, ServiceOption{Label: "PM2 app logs", Type: "pm2", Detail: strings.Join(names, ", "), Detected: true})
 	}
 	return opts
 }

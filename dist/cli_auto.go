@@ -70,9 +70,9 @@ func planAutomaticWith(detected []ServiceOption, appLogs bool) autoPlan {
 			p.logReceivers = append(p.logReceivers, journaldReceiver())
 			p.inventory = append(p.inventory, InventoryItem{Type: s.Type, Label: "Service logs (journal)", Status: invCollecting, Detail: "systemd services; operating-system units left out"})
 		case "pm2":
-			o := planPM2(pm2DirsFn())
-			if len(o.granted) > 0 {
-				p.logReceivers = append(p.logReceivers, pm2Receiver(dirPaths(o.granted)))
+			o := planPM2(pm2DirsFn(), pm2CustomAppsFn())
+			if len(o.granted) > 0 || len(o.apps) > 0 {
+				p.logReceivers = append(p.logReceivers, pm2ReceiverWith(dirPaths(o.granted), o.apps))
 			}
 			p.inventory = append(p.inventory, pm2Inventory(o)...)
 		case "iis_log":

@@ -18,3 +18,6 @@ func prepareStateDir() error {
 }
 
 func grantDockerAccess() {}
+
+// askPM2 needs PM2 on Linux; elsewhere the saved list (dump.pm2) is all there is.
+func askPM2(string) []pm2Process { return nil }

@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -158,18 +161,33 @@ var pm2FileRe = regexp.MustCompile(`^(.+?)-(out|error|err)(?:-(\d+))?\.log$`)
 // pm2Receiver tails the PM2 log directories; the app name, taken from each file's name, is the
 // service name. File offsets are kept in file_storage so a restart doesn't skip or repeat.
 func pm2Receiver(dirs []string) LogReceiver {
+	return pm2ReceiverWith(dirs, nil)
+}
+
+// pm2ReceiverWith is pm2Receiver plus the apps that log outside PM2's folder: their files are
+// tailed by path, and named after the app PM2 reported rather than the file ("out.log").
+func pm2ReceiverWith(dirs []string, apps []pm2App) LogReceiver {
 	var sb strings.Builder
 	sb.WriteString("  filelog/pm2:\n")
 	sb.WriteString("    include:\n")
 	for _, d := range dirs {
 		fmt.Fprintf(&sb, "      - %s\n", yamlQuote(filepath.ToSlash(filepath.Join(d, "*.log"))))
 	}
-	sb.WriteString("    exclude:\n")
-	for _, d := range dirs {
-		fmt.Fprintf(&sb, "      - %s\n", yamlQuote(filepath.ToSlash(filepath.Join(d, "*__*.log"))))
+	for _, a := range apps {
+		for _, p := range a.Paths {
+			fmt.Fprintf(&sb, "      - %s\n", yamlQuote(filepath.ToSlash(p)))
+		}
 	}
+	if len(dirs) > 0 {
+		sb.WriteString("    exclude:\n")
+		for _, d := range dirs {
+			fmt.Fprintf(&sb, "      - %s\n", yamlQuote(filepath.ToSlash(filepath.Join(d, "*__*.log"))))
+		}
+	}
+	// Apps' own files can share a name ("out.log" in two folders), so they are told apart by path.
+	byPath := len(apps) > 0
 	sb.WriteString("    include_file_name: true\n")
-	sb.WriteString("    include_file_path: false\n")
+	fmt.Fprintf(&sb, "    include_file_path: %t\n", byPath)
 	fmt.Fprintf(&sb, "    storage: %s\n", storageExtension)
 	sb.WriteString("    preserve_leading_whitespaces: true\n")
 	sb.WriteString("    operators:\n")
@@ -184,7 +202,21 @@ func pm2Receiver(dirs []string) LogReceiver {
 	sb.WriteString("        from: attributes.pm2_app\n")
 	sb.WriteString("        to: resource[\"service.name\"]\n")
 	sb.WriteString("        on_error: send_quiet\n")
-	sb.WriteString(recombineOperator(`attributes["log.file.name"]`))
+	for _, a := range apps {
+		quoted := make([]string, len(a.Paths))
+		for i, p := range a.Paths {
+			quoted[i] = strconv.Quote(filepath.ToSlash(p))
+		}
+		sb.WriteString("      - type: add\n")
+		fmt.Fprintf(&sb, "        if: %s\n", yamlQuote(`attributes["log.file.path"] in [`+strings.Join(quoted, ", ")+`]`))
+		sb.WriteString("        field: resource[\"service.name\"]\n")
+		fmt.Fprintf(&sb, "        value: %s\n", yamlQuote(a.Name))
+	}
+	if byPath {
+		sb.WriteString(recombineOperator(`attributes["log.file.path"]`))
+	} else {
+		sb.WriteString(recombineOperator(`attributes["log.file.name"]`))
+	}
 	sb.WriteString(timestampOperators())
 	return LogReceiver{ID: "filelog/pm2", Block: sb.String(), Storage: true}
 }
@@ -302,6 +334,138 @@ func findPM2Dirs() []pm2Dir {
 	return out
 }
 
+// pm2App is an app PM2 runs whose logs are outside PM2's own folder (out_file / error_file in an
+// ecosystem file), with the files PM2 says it writes.
+type pm2App struct {
+	Name  string
+	Paths []string
+}
+
+// pm2CustomAppsFn finds the apps that log outside PM2's folder; tests replace it.
+var pm2CustomAppsFn = findPM2CustomApps
+
+// pm2Process is one app as PM2 lists it: `pm2 jlist` nests the paths under pm2_env, dump.pm2
+// (what `pm2 save` writes) has them at the top.
+type pm2Process struct {
+	Name   string `json:"name"`
+	OutLog string `json:"pm_out_log_path"`
+	ErrLog string `json:"pm_err_log_path"`
+	Pm2Env *struct {
+		OutLog string `json:"pm_out_log_path"`
+		ErrLog string `json:"pm_err_log_path"`
+	} `json:"pm2_env"`
+}
+
+func (p pm2Process) paths() []string {
+	out, errLog := p.OutLog, p.ErrLog
+	if p.Pm2Env != nil {
+		out, errLog = p.Pm2Env.OutLog, p.Pm2Env.ErrLog
+	}
+	return []string{out, errLog}
+}
+
+// parsePM2List reads a `pm2 jlist` or dump.pm2 document. jlist can print warnings first, which
+// start with "[PM2]" too, so each line that opens with '[' is tried until one is the list.
+func parsePM2List(data []byte) []pm2Process {
+	var procs []pm2Process
+	if json.Unmarshal(data, &procs) == nil {
+		return procs
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") && json.Unmarshal([]byte(line), &procs) == nil {
+			return procs
+		}
+	}
+	return nil
+}
+
+// findPM2CustomApps asks every PM2 on this host which apps it runs and where each one logs, and
+// keeps the apps whose files aren't in that PM2's logs folder (findPM2Dirs covers those). The
+// running PM2 is asked first, as the user it belongs to; when it can't be asked, the list
+// `pm2 save` wrote is read instead.
+func findPM2CustomApps() []pm2App {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	var homes []string
+	if h := strings.TrimSpace(os.Getenv("PM2_HOME")); h != "" {
+		homes = append(homes, h)
+	}
+	for _, home := range homeDirs() {
+		homes = append(homes, filepath.Join(home, ".pm2"))
+	}
+	seenHome := map[string]bool{}
+	byName := map[string]*pm2App{}
+	var names []string
+	for _, pm2Home := range homes {
+		if seenHome[pm2Home] || !fileExists(pm2Home) {
+			continue
+		}
+		seenHome[pm2Home] = true
+		procs := askPM2(pm2Home)
+		if procs == nil {
+			if data, err := os.ReadFile(filepath.Join(pm2Home, "dump.pm2")); err == nil {
+				procs = parsePM2List(data)
+			}
+		}
+		defaultDir := filepath.Join(pm2Home, "logs")
+		for _, p := range procs {
+			if p.Name == "" {
+				continue
+			}
+			for _, path := range p.paths() {
+				if path == "" || path == "/dev/null" || strings.EqualFold(path, "NULL") || pathpkg.Dir(path) == filepath.ToSlash(defaultDir) {
+					continue
+				}
+				app := byName[p.Name]
+				if app == nil {
+					app = &pm2App{Name: p.Name}
+					byName[p.Name] = app
+					names = append(names, p.Name)
+				}
+				if !containsString(app.Paths, path) {
+					app.Paths = append(app.Paths, path)
+				}
+			}
+		}
+	}
+	sort.Strings(names)
+	apps := make([]pm2App, 0, len(names))
+	for _, n := range names {
+		apps = append(apps, *byName[n])
+	}
+	return apps
+}
+
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// appLogDirs is the folders an app's log files are in, each once.
+func appLogDirs(a pm2App) []string {
+	var dirs []string
+	for _, p := range a.Paths {
+		if d := pathpkg.Dir(p); !containsString(dirs, d) {
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs
+}
+
+func customAppNames(apps []pm2App) []string {
+	names := make([]string, len(apps))
+	for i, a := range apps {
+		names[i] = a.Name
+	}
+	return names
+}
+
 func pm2Apps(dirs []pm2Dir) []string {
 	seen := map[string]bool{}
 	var apps []string
@@ -371,12 +535,13 @@ func shellJoin(cmds [][]string) string {
 // `zharp-collector add pm2`.
 type pm2Outcome struct {
 	granted  []pm2Dir
+	apps     []pm2App // apps logging outside PM2's folder that the collector can read
 	failed   []pm2Dir
 	commands string // what to run by hand for the failed ones, joined with &&
 	noACL    bool   // setfacl isn't installed
 }
 
-func planPM2(dirs []pm2Dir) pm2Outcome {
+func planPM2(dirs []pm2Dir, apps []pm2App) pm2Outcome {
 	var o pm2Outcome
 	var manual [][]string
 	for _, d := range dirs {
@@ -386,6 +551,28 @@ func planPM2(dirs []pm2Dir) pm2Outcome {
 			continue
 		}
 		o.granted = append(o.granted, d)
+	}
+	// An app's own log folders get the same read-only access as PM2's.
+	granted := map[string]error{}
+	for _, a := range apps {
+		ok := true
+		for _, dir := range appLogDirs(a) {
+			err, done := granted[dir]
+			if !done {
+				err = grantPM2Access(dir)
+				granted[dir] = err
+				if err != nil {
+					manual = append(manual, pm2GrantCommands(dir)...)
+				}
+			}
+			if err != nil {
+				ok = false
+				o.failed = append(o.failed, pm2Dir{Path: dir, Apps: []string{a.Name}})
+			}
+		}
+		if ok {
+			o.apps = append(o.apps, a)
+		}
 	}
 	if len(manual) > 0 {
 		o.noACL = !hasBin("setfacl")
@@ -398,8 +585,10 @@ func planPM2(dirs []pm2Dir) pm2Outcome {
 // "<why>. Run: <commands>"; the dashboard shows the commands as a step to copy.
 func pm2Inventory(o pm2Outcome) []InventoryItem {
 	var items []InventoryItem
-	if len(o.granted) > 0 {
-		items = append(items, InventoryItem{Type: "pm2", Label: "PM2 app logs", Status: invCollecting, Detail: strings.Join(pm2Apps(o.granted), ", ")})
+	if len(o.granted) > 0 || len(o.apps) > 0 {
+		names := append(pm2Apps(o.granted), customAppNames(o.apps)...)
+		sort.Strings(names)
+		items = append(items, InventoryItem{Type: "pm2", Label: "PM2 app logs", Status: invCollecting, Detail: strings.Join(names, ", ")})
 	}
 	if len(o.failed) > 0 {
 		var paths []string
@@ -407,7 +596,7 @@ func pm2Inventory(o pm2Outcome) []InventoryItem {
 			paths = append(paths, d.Path)
 		}
 		typ := "pm2"
-		if len(o.granted) > 0 {
+		if len(o.granted) > 0 || len(o.apps) > 0 {
 			typ = "pm2:setup"
 		}
 		why := fmt.Sprintf("The collector can't read %s yet", strings.Join(paths, ", "))
@@ -524,14 +713,17 @@ func configureAppLogs(svcType string) (r LogReceiver, items []InventoryItem, ok 
 		uiDimMsg("Operating-system units (systemd-*, sshd, cron, dbus, ...) are left out.")
 		return journaldReceiver(), []InventoryItem{{Type: svcType, Label: "Service logs (journal)", Status: invCollecting, Detail: "systemd services; operating-system units left out"}}, true
 	case "pm2":
-		dirs := pm2DirsFn()
-		if len(dirs) == 0 {
-			uiWarn("No PM2 logs found (looked in ~/.pm2/logs of root and every user, and $PM2_HOME/logs).")
+		dirs, apps := pm2DirsFn(), pm2CustomAppsFn()
+		if len(dirs) == 0 && len(apps) == 0 {
+			uiWarn("No PM2 logs found (asked PM2, and looked in ~/.pm2/logs of root and every user, and $PM2_HOME/logs).")
 			return LogReceiver{}, nil, false
 		}
-		o := planPM2(dirs)
+		o := planPM2(dirs, apps)
 		for _, d := range o.granted {
 			uiOK(fmt.Sprintf("PM2 logs in %s readable by %s: %s", d.Path, agentUser, strings.Join(d.Apps, ", ")))
+		}
+		for _, a := range o.apps {
+			uiOK(fmt.Sprintf("PM2 app %s logs to %s", a.Name, strings.Join(a.Paths, ", ")))
 		}
 		if len(o.failed) > 0 {
 			uiWarn("Could not give the collector read access to some PM2 logs. Run:")
@@ -541,10 +733,10 @@ func configureAppLogs(svcType string) (r LogReceiver, items []InventoryItem, ok 
 			uiDimMsg(o.commands)
 		}
 		items = pm2Inventory(o)
-		if len(o.granted) == 0 {
+		if len(o.granted) == 0 && len(o.apps) == 0 {
 			return LogReceiver{}, items, false
 		}
-		return pm2Receiver(dirPaths(o.granted)), items, true
+		return pm2ReceiverWith(dirPaths(o.granted), o.apps), items, true
 	}
 	return LogReceiver{}, nil, false
 }
