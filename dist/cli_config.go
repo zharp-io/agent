@@ -411,7 +411,10 @@ func filelogOperatorsBlock(name string) string {
 	sb.WriteString("    preserve_leading_whitespaces: true\n")
 	sb.WriteString("    operators:\n")
 	sb.WriteString(recombineOperator(`attributes["log.file.path"]`))
-	sb.WriteString(timestampOperatorsOnError("send"))
+	// Quiet: lines that don't open with a date (nginx and Apache access logs start with the
+	// client IP) pass on unchanged; the server reads their time and fields. Reporting each one
+	// wrote two errors per request into the collector's own log.
+	sb.WriteString(timestampOperatorsOnError("send_quiet"))
 
 	// Stamp the service name on every record regardless of whether above matched.
 	sb.WriteString("      - type: add\n")
