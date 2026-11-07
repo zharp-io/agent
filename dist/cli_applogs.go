@@ -212,6 +212,7 @@ func pm2ReceiverWith(dirs []string, apps []pm2App) LogReceiver {
 		sb.WriteString("        field: resource[\"service.name\"]\n")
 		fmt.Fprintf(&sb, "        value: %s\n", yamlQuote(a.Name))
 	}
+	sb.WriteString(pm2DatePrefixOperators)
 	if byPath {
 		sb.WriteString(recombineOperator(`attributes["log.file.path"]`))
 	} else {
@@ -247,6 +248,45 @@ func receiverChanged(content string, r LogReceiver) (existed, changed bool) {
 var forgetReadPositions = func(id string) {
 	_ = os.Remove(filepath.Join(stateDir(), "storage", "receiver_"+strings.ReplaceAll(id, "/", "_")))
 }
+
+// pm2DatePrefixOperators handle PM2's log_date_format, which writes "2026-11-07 07:40:19 +00:00: "
+// in front of every line, stack frames included. Left there, every frame looks like a new record
+// and the app's own text is behind PM2's. The prefix becomes the record's time and leaves the
+// body, before lines are joined. A line without it, or one whose date won't parse, passes as is.
+const pm2DatePrefixOperators = "" +
+	"      # PM2's log_date_format prefix: the record's time, then out of the body.\n" +
+	"      - type: regex_parser\n" +
+	"        if: 'body matches \"^\\\\d{4}-\\\\d{2}-\\\\d{2} \\\\d{2}:\\\\d{2}:\\\\d{2}\"'\n" +
+	"        regex: '^(?P<pm2_ts>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?) ?(?P<pm2_tz>Z|[+-]\\d{2}:?\\d{2})?: (?P<pm2_msg>(?s:.*))'\n" +
+	"        on_error: send_quiet\n" +
+	"      - type: add\n" +
+	"        if: 'attributes.pm2_ts != nil'\n" +
+	"        field: attributes.pm2_when\n" +
+	"        value: 'EXPR(attributes.pm2_ts + \" \" + (attributes.pm2_tz ?? \"+00:00\"))'\n" +
+	"        on_error: send_quiet\n" +
+	"      - type: time_parser\n" +
+	"        if: 'attributes.pm2_when != nil'\n" +
+	"        parse_from: attributes.pm2_when\n" +
+	"        layout_type: gotime\n" +
+	"        layout: '2006-01-02 15:04:05.999999999 Z07:00'\n" +
+	"        on_error: send_quiet\n" +
+	"      - type: move\n" +
+	"        if: 'attributes.pm2_msg != nil'\n" +
+	"        from: attributes.pm2_msg\n" +
+	"        to: body\n" +
+	"        on_error: send_quiet\n" +
+	"      - type: remove\n" +
+	"        if: 'attributes.pm2_ts != nil'\n" +
+	"        field: attributes.pm2_ts\n" +
+	"        on_error: send_quiet\n" +
+	"      - type: remove\n" +
+	"        if: 'attributes.pm2_tz != nil'\n" +
+	"        field: attributes.pm2_tz\n" +
+	"        on_error: send_quiet\n" +
+	"      - type: remove\n" +
+	"        if: 'attributes.pm2_when != nil'\n" +
+	"        field: attributes.pm2_when\n" +
+	"        on_error: send_quiet\n"
 
 // pm2AppName is the service name a PM2 log file maps to ("" when it isn't a PM2 log).
 func pm2AppName(file string) string {

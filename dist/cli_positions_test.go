@@ -101,3 +101,17 @@ func TestUpdateAddsNewPM2AppsAndStartsTheirFilesAtTheEnd(t *testing.T) {
 		}
 	}
 }
+
+// PM2 writes its date in front of every line; it has to come off before lines are joined, or each
+// stack frame becomes its own record.
+func TestPM2ReceiverTakesPM2sDateOffBeforeJoining(t *testing.T) {
+	block := pm2Receiver([]string{"/home/a/.pm2/logs"}).Block
+	prefix := strings.Index(block, "PM2's log_date_format prefix")
+	recombine := strings.Index(block, "type: recombine")
+	if prefix < 0 || recombine < 0 || prefix > recombine {
+		t.Fatalf("the PM2 date must be handled before recombine:\n%s", block)
+	}
+	if !strings.Contains(block, "layout: '2006-01-02 15:04:05.999999999 Z07:00'") {
+		t.Error("PM2's date isn't parsed as the record's time")
+	}
+}
