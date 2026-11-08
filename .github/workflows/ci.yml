@@ -1,12 +1,13 @@
 name: CI
 
-# Every platform the agent ships for: each module's tests on its own OS and architecture, and the
-# agent installed for real (install, this release's features, an update's merge step, uninstall).
-# Runs on every push and pull request, and before every release (release.yml calls it), so a
-# release can't ship a platform that doesn't work.
+# Every platform the agent ships for: each module's tests on its own OS and architecture, the
+# agent installed for real (install, this release's features, an update's merge step, uninstall),
+# and its container deploys (Docker Compose, the Helm chart on kind). Runs on every push and pull
+# request, and before every release (release.yml calls it), so a release can't ship a platform
+# that doesn't work.
 on:
   push:
-    branches: [main]
+    branches: [main, 'ci/**']
   pull_request:
   workflow_call:
 
@@ -78,3 +79,26 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./.github/scripts/smoke.ps1
+
+  containers:
+    name: Containers (Docker Compose, Kubernetes)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: dist/go.mod
+          cache-dependency-path: '**/go.sum'
+      - name: Build the image
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          (cd dist && go build -ldflags="-X main.version=v0.0.0-ci" -o ../zharp-collector-linux-amd64 .)
+          docker build -t zharp-agent:ci .
+      - name: Install kind
+        run: |
+          curl -fsSLo kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+          sudo install -m 0755 kind /usr/local/bin/kind
+      - name: Deploy and check what arrives
+        run: bash .github/scripts/containers.sh zharp-agent:ci
