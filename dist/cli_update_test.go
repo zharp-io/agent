@@ -168,6 +168,9 @@ func TestMergeAddsOnlyWhatIsMissing(t *testing.T) {
 	if collectsProcesses() {
 		want = "hostmetrics,hostmetrics/processes,filelog/myapp,otlp,postgresql,docker_stats,docker_state,docker_logs,journald,filelog/pm2"
 	}
+	if collectsDiskUsage() {
+		want = strings.Replace(want, ",otlp,", ",otlp,zharp_disk_usage,", 1)
+	}
 	if got := strings.Join(receiverIDList(t, after), ","); got != want {
 		t.Errorf("receivers: %s", got)
 	}
@@ -644,6 +647,9 @@ func TestReceiverLabels(t *testing.T) {
 	want := "Host metrics, myapp logs, Application traces and logs, PostgreSQL"
 	if collectsProcesses() {
 		want = "Host metrics, Processes, myapp logs, Application traces and logs, PostgreSQL"
+	}
+	if collectsDiskUsage() {
+		want = strings.Replace(want, "Application traces and logs, ", "Application traces and logs, Disk usage by folder, ", 1)
 	}
 	if got := strings.Join(receiverLabels(rs), ", "); got != want {
 		t.Errorf("labels: %s", got)

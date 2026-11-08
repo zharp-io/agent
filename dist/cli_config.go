@@ -403,7 +403,9 @@ func buildConfig(spec configSpec) string {
 		sb.WriteString(metricsPipelineBlock(otherIDs))
 	}
 
-	return sb.String()
+	content := sb.String()
+	content, _ = withDiskUsage(content)
+	return content
 }
 
 // filelogOperatorsBlock returns the YAML operators block for a filelog/<name>

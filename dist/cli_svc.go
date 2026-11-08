@@ -16,5 +16,6 @@ func cliUninstall() {
 		fmt.Printf("  [!] Uninstall encountered errors: %v\n", err)
 		return
 	}
+	removeInspectHelper()
 	uiOK("Service and config removed.")
 }

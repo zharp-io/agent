@@ -191,6 +191,11 @@ func mergeSources(content string, inventory []InventoryItem, detected []ServiceO
 		res.config = next
 		res.migrated = append(res.migrated, notes...)
 	}
+	// What takes each drive's space (agent 1.9.5).
+	if next, notes := withDiskUsage(res.config); next != res.config {
+		res.config = next
+		res.migrated = append(res.migrated, notes...)
+	}
 
 	// Metric receivers. The first is hostmetrics, always there; the rest pair with their blocks.
 	for i, id := range plan.metricsReceivers[1:] {
@@ -558,6 +563,8 @@ func receiverLabels(rs []configReceiver) []string {
 			label = "PM2 app logs"
 		case base == "hostmetrics" && name == "processes":
 			label = "Processes"
+		case base == "zharp_disk_usage":
+			label = "Disk usage by folder"
 		case base == "filelog" && name != "":
 			label = name + " logs"
 		case label == "":
@@ -824,6 +831,13 @@ func runApply(opts applyOptions) {
 		os.Exit(1)
 	}
 
+	if !opts.dryRun {
+		if exe, err := os.Executable(); err == nil {
+			if note := ensureInspectHelper(exe); note != "" {
+				uiDimMsg(note)
+			}
+		}
+	}
 	if !opts.dryRun && (out.configChanged || opts.binaryChanged()) {
 		uiInfo("Restarting service to apply changes...")
 		if err := restartFn(); err != nil {

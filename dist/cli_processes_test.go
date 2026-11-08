@@ -5,8 +5,15 @@ import (
 	"testing"
 )
 
+// withoutDiskUsage is a config without the folder scan, as before agent 1.9.5.
+func withoutDiskUsage(content string) string {
+	content = strings.Replace(content, "\n"+diskUsageReceiverBlock, "", 1)
+	return strings.Replace(content, ", "+diskUsageReceiverID+"]", "]", 1)
+}
+
 // withoutProcesses is a config as install wrote it before agent 1.9.4: no process collection.
 func withoutProcesses(content string) string {
+	content = withoutDiskUsage(content)
 	content = strings.Replace(content, processReceiverBlock, "", 1)
 	content = strings.Replace(content, processTransformBlock, "", 1)
 	return strings.Replace(content, processPipelineBlock, "", 1)
@@ -16,7 +23,7 @@ func TestInstallCollectsProcesses(t *testing.T) {
 	if !collectsProcesses() {
 		t.Skip("no process collection on this platform")
 	}
-	cfg := buildConfig(configSpec{metricsReceivers: []string{"hostmetrics"}, tracing: true})
+	cfg := withoutDiskUsage(buildConfig(configSpec{metricsReceivers: []string{"hostmetrics"}, tracing: true}))
 	for _, part := range []string{processReceiverBlock, processTransformBlock, processPipelineBlock} {
 		if strings.Count(cfg, part) != 1 {
 			t.Fatalf("install config should have this once:\n%s\n---\n%s", part, cfg)
@@ -73,5 +80,31 @@ func TestCommandLinesAreTrimmedOnTheHost(t *testing.T) {
 	}
 	if !strings.Contains(processPipelineBlock, processTransformID) || !strings.Contains(processPipelineBlock, "exporters: ["+otlpExporterID+"]\n") {
 		t.Fatalf("processes go through the transform, and only to the OTLP exporter:\n%s", processPipelineBlock)
+	}
+}
+
+func TestDiskUsageIsAddedOnceToTheProcessesPipeline(t *testing.T) {
+	if !collectsDiskUsage() {
+		t.Skip("folder sizes are measured on Linux")
+	}
+	cfg := buildConfig(configSpec{metricsReceivers: []string{"hostmetrics"}, tracing: true})
+	if strings.Count(cfg, "\n  "+diskUsageReceiverID+":") != 1 {
+		t.Fatalf("install config should have the receiver once:\n%s", cfg)
+	}
+	if !strings.Contains(cfg, "receivers: ["+processReceiverID+", "+diskUsageReceiverID+"]") {
+		t.Fatalf("the receiver joins the processes pipeline:\n%s", cfg)
+	}
+	updated, notes := withDiskUsage(withoutDiskUsage(cfg))
+	if updated != cfg || len(notes) != 1 {
+		t.Fatalf("update should give the install config back:\n%s", updated)
+	}
+	if again, notes := withDiskUsage(updated); again != updated || notes != nil {
+		t.Fatal("a second update changes nothing")
+	}
+}
+
+func TestTheHelperRefusesEverythingButDiskUsage(t *testing.T) {
+	if isInspectHelper() {
+		t.Fatal("the test binary isn't the helper")
 	}
 }

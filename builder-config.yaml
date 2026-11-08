@@ -28,6 +28,9 @@ receivers:
     path: ./dockerlogsreceiver
   # Every container's state, exit code, OOM kill, ports and restarts, stopped ones included
   # (docker_stats only sees running containers). Same module and API client as docker_logs.
+  # What takes each drive's space: biggest folders and space per user, hourly (Linux).
+  - gomod: github.com/zharp-io/agent/diskusagereceiver v0.0.1
+    path: ./diskusagereceiver
   - gomod: github.com/zharp-io/agent/dockerlogsreceiver v0.0.1
     import: github.com/zharp-io/agent/dockerlogsreceiver/dockerstatereceiver
     name: dockerstatereceiver

@@ -85,3 +85,27 @@ func withProcessMetrics(content string) (string, []string) {
 	content = insertPipeline(content, processPipelineBlock)
 	return content, []string{"Processes: CPU and memory per program, for what's using a server's resources (command lines trimmed to the program and its first two arguments)"}
 }
+
+// What takes each drive's space, for Servers & Containers' Disk breakdown: hourly, the biggest
+// folders two levels down and the space each user owns (zharp_disk_usage, package
+// diskusagereceiver). It runs on Linux, in the processes pipeline (OTLP only), through the
+// read-only helper install and update put in place (ensureInspectHelper).
+const (
+	diskUsageReceiverID    = "zharp_disk_usage"
+	diskUsageReceiverBlock = "  " + diskUsageReceiverID + ":\n" +
+		"    collection_interval: 1h\n"
+)
+
+// collectsDiskUsage reports whether this platform's agent measures folders.
+func collectsDiskUsage() bool { return runtime.GOOS == "linux" }
+
+// withDiskUsage adds the folder scan to a config that collects processes, as `update` and
+// install do. It changes nothing in a config that already has it or doesn't collect processes.
+func withDiskUsage(content string) (string, []string) {
+	if !collectsDiskUsage() || strings.Contains(content, "\n  "+diskUsageReceiverID+":") || !hasPipeline(content, processPipelineID) {
+		return content, nil
+	}
+	content = strings.Replace(content, "\nprocessors:", "\n"+diskUsageReceiverBlock+"\nprocessors:", 1)
+	content = addToPipeline(content, processPipelineID, []string{diskUsageReceiverID})
+	return content, []string{"Disk usage: each drive's biggest folders and the space each user owns, hourly"}
+}

@@ -8,6 +8,11 @@ import (
 // handleSubcommand checks os.Args[1] and dispatches CLI subcommands.
 // Returns true if a subcommand was handled (caller should return early).
 func handleSubcommand() bool {
+	// The read-only helper copy measures disk usage and nothing else (cli_inspect.go).
+	if isInspectHelper() {
+		runInspectHelper()
+		return true
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "health" {
 		cliHealth()
 		return true
@@ -29,6 +34,9 @@ func handleSubcommand() bool {
 		return true
 	case "update":
 		cliUpdate()
+		return true
+	case "inspect":
+		cliInspect()
 		return true
 	case "start":
 		if err := svcStart(); err != nil {

@@ -35,6 +35,7 @@ import (
 	journaldreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/journaldreceiver"
 	dockerlogsreceiver "github.com/zharp-io/agent/dockerlogsreceiver"
 	dockerstatereceiver "github.com/zharp-io/agent/dockerlogsreceiver/dockerstatereceiver"
+	diskusagereceiver "github.com/zharp-io/agent/diskusagereceiver"
 	fluentforwardreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/fluentforwardreceiver"
 	statsdreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/statsdreceiver"
 	kubeletstatsreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver"
@@ -87,6 +88,7 @@ func components() (otelcol.Factories, error) {
 		journaldreceiver.NewFactory(),
 		dockerlogsreceiver.NewFactory(),
 		dockerstatereceiver.NewFactory(),
+		diskusagereceiver.NewFactory(),
 		fluentforwardreceiver.NewFactory(),
 		statsdreceiver.NewFactory(),
 		kubeletstatsreceiver.NewFactory(),
@@ -107,6 +109,7 @@ func components() (otelcol.Factories, error) {
 		journaldreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/journaldreceiver v0.154.0",
 		dockerlogsreceiver.NewFactory().Type(): "github.com/zharp-io/agent/dockerlogsreceiver v0.0.1",
 		dockerstatereceiver.NewFactory().Type(): "github.com/zharp-io/agent/dockerlogsreceiver v0.0.1",
+		diskusagereceiver.NewFactory().Type(): "github.com/zharp-io/agent/diskusagereceiver v0.0.1",
 		fluentforwardreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/fluentforwardreceiver v0.154.0",
 		statsdreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/statsdreceiver v0.154.0",
 		kubeletstatsreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver v0.154.0",

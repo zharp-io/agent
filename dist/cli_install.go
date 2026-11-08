@@ -362,6 +362,9 @@ func finishInstall(yaml string, envVars map[string]string, hasDocker bool, inven
 		fmt.Fprintf(os.Stderr, "  [!] Service install failed: %v\n", err)
 		os.Exit(1)
 	}
+	if note := ensureInspectHelper(binaryPath); note != "" {
+		uiDimMsg(note)
+	}
 
 	// Done.
 	fmt.Println()
