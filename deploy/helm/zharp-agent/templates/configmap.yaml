@@ -1,5 +1,10 @@
 {{- $fullname := include "zharp-agent.fullname" . -}}
 {{- $metrics := and .Values.metrics.enabled (or .Values.metrics.kubelet .Values.metrics.host) -}}
+{{- $node := and .Values.metrics.enabled .Values.metrics.host -}}
+{{- $whatsUsing := list -}}
+{{- if and $node .Values.metrics.programs }}{{ $whatsUsing = append $whatsUsing "hostmetrics/processes" }}{{ end -}}
+{{- if and $node .Values.metrics.diskUsage }}{{ $whatsUsing = append $whatsUsing "zharp_disk_usage" }}{{ end -}}
+{{- if and $node .Values.metrics.networkByProgram .Values.hostNetwork }}{{ $whatsUsing = append $whatsUsing "zharp_network_usage" }}{{ end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -94,6 +99,57 @@ data:
                 enabled: false
           system:
       {{- end }}
+      {{- if has "hostmetrics/processes" $whatsUsing }}
+      # Each program's CPU and memory on the node, every 30s. Processes in pods are counted with
+      # their containers; Zharp keeps the node's own programs (kubelet, containerd, ...).
+      hostmetrics/processes:
+        root_path: /hostfs
+        collection_interval: 30s
+        scrapers:
+          process:
+            # The agent itself runs in a pod and is counted there; inside its own cgroup
+            # namespace it would look like one of the node's programs.
+            exclude:
+              names: [zharp-collector]
+              match_type: strict
+            mute_process_name_error: true
+            mute_process_exe_error: true
+            mute_process_io_error: true
+            mute_process_user_error: true
+            mute_process_cgroup_error: true
+            metrics:
+              process.cpu.time:
+                enabled: false
+              process.cpu.utilization:
+                enabled: true
+              process.memory.usage:
+                enabled: true
+              process.memory.virtual:
+                enabled: false
+              process.disk.io:
+                enabled: false
+            resource_attributes:
+              process.cgroup:
+                enabled: true
+              process.command:
+                enabled: false
+              process.executable.path:
+                enabled: false
+              process.parent_pid:
+                enabled: false
+      {{- end }}
+      {{- if has "zharp_disk_usage" $whatsUsing }}
+      # Each of the node's drives: its biggest folders and files, hourly, at idle priority.
+      zharp_disk_usage:
+        collection_interval: 1h
+        root_path: /hostfs
+      {{- end }}
+      {{- if has "zharp_network_usage" $whatsUsing }}
+      # Each program's TCP traffic and peers on the node, every minute.
+      zharp_network_usage:
+        collection_interval: 1m
+        root_path: /hostfs
+      {{- end }}
       {{- if .Values.traces.enabled }}
       otlp:
         protocols:
@@ -176,6 +232,16 @@ data:
         {{- else }}
         rules: []
         {{- end }}
+      {{- if has "hostmetrics/processes" $whatsUsing }}
+      # A command line keeps the program and its first two arguments ("node /app/main.js",
+      # "java -jar app.jar"); the rest can hold passwords and tokens and is dropped here.
+      transform/processes:
+        error_mode: ignore
+        metric_statements:
+          - context: resource
+            statements:
+              - 'replace_pattern(attributes["process.command_line"], "^(\"[^\"]*\"|[^ ]+)( +(\"[^\"]*\"|[^ ]+))?( +(\"[^\"]*\"|[^ ]+))?.*$$", "$$1$$2$$4")'
+      {{- end }}
       # host.name (the node) and k8s.cluster.name, from OTEL_RESOURCE_ATTRIBUTES.
       resourcedetection:
         detectors: [env]
@@ -245,6 +311,13 @@ data:
           receivers: [{{ $r := list }}{{ if and .Values.metrics.enabled .Values.metrics.kubelet }}{{ $r = append $r "kubeletstats" }}{{ end }}{{ if and .Values.metrics.enabled .Values.metrics.host }}{{ $r = append $r "hostmetrics" }}{{ end }}{{ join ", " $r }}]
           processors: [memory_limiter, resourcedetection/host, batch]
           exporters: [otlp_http/zharp, zharp]
+        {{- end }}
+        {{- if $whatsUsing }}
+        # What's using the node: programs' CPU, memory and traffic, and drives' biggest folders.
+        metrics/processes:
+          receivers: [{{ join ", " $whatsUsing }}]
+          processors: [memory_limiter, resourcedetection/host{{ if has "hostmetrics/processes" $whatsUsing }}, transform/processes{{ end }}, batch]
+          exporters: [otlp_http/zharp]
         {{- end }}
         {{- if .Values.traces.enabled }}
         # Applications' own OpenTelemetry metrics.

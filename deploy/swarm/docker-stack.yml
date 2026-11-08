@@ -43,19 +43,22 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /:/hostfs:ro
+      # The node's users, so programs and files are owned by names, not numbers.
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/group:/etc/group:ro
       - zharp-state:/var/lib/zharp-collector
-    ports:
-      # host mode: port binds on the node directly, not load-balanced across nodes
-      # apps on the same node use localhost:4317 to send OTLP
-      - target: 4317
-        published: 4317
-        mode: host
-      - target: 4318
-        published: 4318
-        mode: host
-      - target: 13133
-        published: 13133
-        mode: host
+    # Read-only: SYS_PTRACE sees which process holds each network connection.
+    cap_add:
+      - SYS_PTRACE
+    # The node's network: its connection table, for each program's traffic, and the node's own
+    # ports 4317, 4318 and 13133 (apps on the same node send OTLP to localhost:4317).
+    networks:
+      - hostnet
+
+networks:
+  hostnet:
+    external: true
+    name: host
 
 volumes:
   zharp-state:

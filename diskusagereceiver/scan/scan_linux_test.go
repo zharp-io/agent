@@ -17,8 +17,8 @@ func TestADriveIsNamedWhereItIsMountedWholeNotWhereOneOfItsFoldersIs(t *testing.
 30 26 8:1 /etc/hosts-file /etc/hosts rw - ext4 /dev/sda1 rw
 31 26 8:32 /data /srv/data rw - xfs /dev/sdc rw
 `
-	isDir := func(mount string) bool { return mount != "/etc/hosts" }
-	got := drivesFrom(mountinfo, isDir)
+	usable := func(mount, _ string) bool { return mount != "/etc/hosts" }
+	got := drivesFrom(mountinfo, usable)
 	// /dev/sdc is only mounted by a folder: that folder is the drive here.
 	want := []string{"/", "/mnt/HC_Volume_107340381", "/srv/data"}
 	if !reflect.DeepEqual(got, want) {

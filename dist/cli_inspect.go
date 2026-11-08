@@ -78,15 +78,16 @@ func cliInspect() {
 func cliInspectSockets(args []string) {
 	fs := flag.NewFlagSet("inspect sockets", flag.ExitOnError)
 	serve := fs.Bool("serve", false, "answer once per line read from stdin")
+	root := fs.String("root", "", "where the host's file system is mounted, in a container (/hostfs)")
 	_ = fs.Parse(args)
 	out := json.NewEncoder(os.Stdout)
 	if !*serve {
-		_ = out.Encode(conns.Processes())
+		_ = out.Encode(conns.Processes(*root))
 		return
 	}
 	in := bufio.NewScanner(os.Stdin)
 	for in.Scan() {
-		if err := out.Encode(conns.Processes()); err != nil {
+		if err := out.Encode(conns.Processes(*root)); err != nil {
 			return
 		}
 	}
@@ -97,6 +98,7 @@ func cliInspectSockets(args []string) {
 func cliInspectNetwork(args []string) {
 	fs := flag.NewFlagSet("inspect network", flag.ExitOnError)
 	seconds := fs.Int("seconds", 10, "how long to measure")
+	root := fs.String("root", "", "where the host's file system is mounted, in a container (/hostfs)")
 	_ = fs.Parse(args)
 	if !conns.Supported() {
 		fmt.Fprintln(os.Stderr, "  [!] measuring connections is only supported on Linux")
@@ -105,9 +107,9 @@ func cliInspectNetwork(args []string) {
 
 	meter := conns.NewMeter()
 	byInode := map[uint32]conns.Program{}
-	owners := conns.Processes()
+	owners := conns.Processes(*root)
 	refresh := func() {
-		owners = conns.Processes()
+		owners = conns.Processes(*root)
 		for _, p := range owners.Processes {
 			for _, inode := range p.Inodes {
 				byInode[inode] = conns.Program{Name: p.Name, CommandLine: p.CommandLine, Owner: p.Owner}
@@ -226,10 +228,11 @@ func cliInspectDisk(args []string) {
 	top := fs.Int("top", 12, "top-level folders per drive")
 	children := fs.Int("children", 4, "sub-folders under each, of those holding 1% of the drive or more")
 	depth := fs.Int("depth", 6, "folder levels followed down")
+	root := fs.String("root", "", "where the host's file system is mounted, in a container (/hostfs)")
 	timeout := fs.Duration("timeout", 4*time.Minute, "stop after this long and report what was measured")
 	_ = fs.Parse(args)
 
-	res, err := scan.Run(scan.Options{Depth: *depth, Top: *top, Children: *children, Timeout: *timeout, Mounts: fs.Args()})
+	res, err := scan.Run(scan.Options{Depth: *depth, Top: *top, Children: *children, Timeout: *timeout, Mounts: fs.Args(), Root: *root})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "  [!] "+err.Error())
 		os.Exit(1)

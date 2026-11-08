@@ -31,6 +31,9 @@ type Options struct {
 	Timeout time.Duration
 	// Mounts restricts the scan to these mount points; empty means every real drive.
 	Mounts []string
+	// Root is where the host's file system is mounted when the scan runs in a container
+	// (/hostfs): the host's drives are found and walked under it, and reported by their own paths.
+	Root string
 }
 
 // Folder is a folder and the space under it, or, with File, one big file.
@@ -96,7 +99,7 @@ func Run(opts Options) (Result, error) {
 	mounts := opts.Mounts
 	if len(mounts) == 0 {
 		var err error
-		if mounts, err = drives(); err != nil {
+		if mounts, err = drives(opts.Root); err != nil {
 			return Result{}, err
 		}
 	}
@@ -115,9 +118,14 @@ func Run(opts Options) (Result, error) {
 // skippedUnderRoot are kernel and runtime file systems: never on a drive, often enormous to walk.
 var skippedUnderRoot = []string{"/proc", "/sys", "/dev", "/run"}
 
-func scanMount(root string, opts Options, deadline time.Time) Mount {
+// scanMount scans the drive mounted at mount (the host's path), found under opts.Root.
+func scanMount(mount string, opts Options, deadline time.Time) Mount {
 	started := time.Now()
-	m := Mount{Mount: root, Complete: true}
+	m := Mount{Mount: mount, Complete: true}
+	root := mount
+	if opts.Root != "" {
+		root = filepath.Join(opts.Root, mount)
+	}
 	rootDev, haveDev := deviceOf(root)
 	sizes := map[string]int64{}  // folder path (depth 1..Depth) → bytes under it
 	owners := map[string]int64{} // user → bytes
@@ -143,7 +151,7 @@ func scanMount(root string, opts Options, deadline time.Time) Mount {
 			}
 		}
 		if d.IsDir() && path != root {
-			if root == "/" && isSkippedRoot(path) {
+			if mount == "/" && isSkippedRoot(hostPath(opts.Root, path)) {
 				return filepath.SkipDir
 			}
 			// Another drive mounted inside this one has its own scan.
@@ -176,10 +184,34 @@ func scanMount(root string, opts Options, deadline time.Time) Mount {
 		m.Complete = false
 	}
 
-	m.Folders = topFolders(root, sizes, files, m.Bytes, opts)
+	m.Folders = hostPaths(opts.Root, topFolders(root, sizes, files, m.Bytes, opts))
 	m.Owners = topOwners(owners)
 	m.Seconds = time.Since(started).Seconds()
 	return m
+}
+
+// hostPath is a path walked under root as the host knows it: /hostfs/var/log → /var/log.
+func hostPath(root, path string) string {
+	if root == "" {
+		return filepath.ToSlash(path)
+	}
+	rel := strings.TrimPrefix(filepath.ToSlash(path), filepath.ToSlash(filepath.Clean(root)))
+	if rel == "" {
+		return "/"
+	}
+	return rel
+}
+
+// hostPaths gives a tree's folders and files their host paths.
+func hostPaths(root string, folders []Folder) []Folder {
+	if root == "" {
+		return folders
+	}
+	for i := range folders {
+		folders[i].Path = hostPath(root, folders[i].Path)
+		folders[i].Children = hostPaths(root, folders[i].Children)
+	}
+	return folders
 }
 
 func isSkippedRoot(path string) bool {

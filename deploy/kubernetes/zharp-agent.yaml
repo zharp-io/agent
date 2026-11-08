@@ -106,6 +106,51 @@ data:
               system.filesystem.inodes.usage:
                 enabled: false
           system:
+      # Each program's CPU and memory on the node, every 30s. Processes in pods are counted with
+      # their containers; Zharp keeps the node's own programs (kubelet, containerd, ...).
+      hostmetrics/processes:
+        root_path: /hostfs
+        collection_interval: 30s
+        scrapers:
+          process:
+            # The agent itself runs in a pod and is counted there; inside its own cgroup
+            # namespace it would look like one of the node's programs.
+            exclude:
+              names: [zharp-collector]
+              match_type: strict
+            mute_process_name_error: true
+            mute_process_exe_error: true
+            mute_process_io_error: true
+            mute_process_user_error: true
+            mute_process_cgroup_error: true
+            metrics:
+              process.cpu.time:
+                enabled: false
+              process.cpu.utilization:
+                enabled: true
+              process.memory.usage:
+                enabled: true
+              process.memory.virtual:
+                enabled: false
+              process.disk.io:
+                enabled: false
+            resource_attributes:
+              process.cgroup:
+                enabled: true
+              process.command:
+                enabled: false
+              process.executable.path:
+                enabled: false
+              process.parent_pid:
+                enabled: false
+      # Each of the node's drives: its biggest folders and files, hourly, at idle priority.
+      zharp_disk_usage:
+        collection_interval: 1h
+        root_path: /hostfs
+      # Each program's TCP traffic and peers on the node, every minute.
+      zharp_network_usage:
+        collection_interval: 1m
+        root_path: /hostfs
       otlp:
         protocols:
           grpc:
@@ -165,6 +210,14 @@ data:
           enabled: true
           multiline: 'auto'
         rules: []
+      # A command line keeps the program and its first two arguments ("node /app/main.js",
+      # "java -jar app.jar"); the rest can hold passwords and tokens and is dropped here.
+      transform/processes:
+        error_mode: ignore
+        metric_statements:
+          - context: resource
+            statements:
+              - 'replace_pattern(attributes["process.command_line"], "^(\"[^\"]*\"|[^ ]+)( +(\"[^\"]*\"|[^ ]+))?( +(\"[^\"]*\"|[^ ]+))?.*$$", "$$1$$2$$4")'
       # host.name (the node) and k8s.cluster.name, from OTEL_RESOURCE_ATTRIBUTES.
       resourcedetection:
         detectors: [env]
@@ -224,6 +277,11 @@ data:
           receivers: [kubeletstats, hostmetrics]
           processors: [memory_limiter, resourcedetection/host, batch]
           exporters: [otlp_http/zharp, zharp]
+        # What's using the node: programs' CPU, memory and traffic, and drives' biggest folders.
+        metrics/processes:
+          receivers: [hostmetrics/processes, zharp_disk_usage, zharp_network_usage]
+          processors: [memory_limiter, resourcedetection/host, transform/processes, batch]
+          exporters: [otlp_http/zharp]
         # Applications' own OpenTelemetry metrics.
         metrics:
           receivers: [otlp]
@@ -345,11 +403,14 @@ spec:
         app.kubernetes.io/instance: zharp-agent
       annotations:
         # Restart the agents when their config changes.
-        checksum/config: ba03b59dcaa0448d0d8ba04961b01ee1a848a2d99ad0804ff9c4c8dcbd3b08c5
+        checksum/config: 59f71e6b562c2b745703c50fc851d83f79b6971701df639e4fcc92811f02b482
         # The agent's own logs are never collected (also excluded by path in the config).
         zharp.io/logs: "false"
     spec:
       serviceAccountName: zharp-agent
+      # The node's network: its connection table, for network by program.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       tolerations:
         - operator: Exists
       containers:
@@ -411,6 +472,9 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
+              add:
+              - DAC_READ_SEARCH
+              - SYS_PTRACE
               drop:
               - ALL
             readOnlyRootFilesystem: true
@@ -433,6 +497,13 @@ spec:
               mountPath: /hostfs
               readOnly: true
               mountPropagation: HostToContainer
+            # The node's users, so programs and files are owned by names, not numbers.
+            - name: passwd
+              mountPath: /etc/passwd
+              readOnly: true
+            - name: group
+              mountPath: /etc/group
+              readOnly: true
       volumes:
         - name: config
           configMap:
@@ -450,3 +521,11 @@ spec:
         - name: hostfs
           hostPath:
             path: /
+        - name: passwd
+          hostPath:
+            path: /etc/passwd
+            type: File
+        - name: group
+          hostPath:
+            path: /etc/group
+            type: File

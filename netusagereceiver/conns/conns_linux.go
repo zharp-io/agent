@@ -181,10 +181,12 @@ func Watch(ctx context.Context, closed func(Socket)) error {
 }
 
 // Processes lists the processes holding sockets and which ones. Without root or CAP_SYS_PTRACE
-// only this user's own processes can be read; Privileged says which it was.
-func Processes() Owners {
+// only this user's own processes can be read; Privileged says which it was. root is where the
+// host's file system is ("" natively; /hostfs for the agent in a container, whose /hostfs/proc
+// is the host's, so the host's processes are seen without sharing its process namespace).
+func Processes(root string) Owners {
 	out := Owners{Privileged: privileged()}
-	entries, err := os.ReadDir("/proc")
+	entries, err := os.ReadDir(root + "/proc")
 	if err != nil {
 		return out
 	}
@@ -193,7 +195,7 @@ func Processes() Owners {
 		if err != nil {
 			continue
 		}
-		dir := "/proc/" + e.Name()
+		dir := root + "/proc/" + e.Name()
 		fds, err := os.ReadDir(dir + "/fd")
 		if err != nil {
 			continue
@@ -227,6 +229,25 @@ func Processes() Owners {
 		})
 	}
 	return out
+}
+
+// HostNetwork reports whether this process shares the host's network namespace, which the
+// connection table must be read from: natively always; in a container only with host
+// networking. root is where the host's file system is (/hostfs in a container, "" natively).
+// known is false when it can't be told (natively, the agent's user can't read init's namespace).
+func HostNetwork(root string) (host, known bool) {
+	if root == "" {
+		return true, false
+	}
+	self, err := os.Readlink("/proc/self/ns/net")
+	if err != nil {
+		return false, false
+	}
+	init, err := os.Readlink(root + "/proc/1/ns/net")
+	if err != nil {
+		return false, false
+	}
+	return self == init, true
 }
 
 var userNames = map[uint32]string{}

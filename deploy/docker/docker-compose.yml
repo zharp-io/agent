@@ -8,8 +8,11 @@
 # The collector will automatically tail logs from every container on this host
 # and collect host + per-container metrics — no per-service config needed.
 #
-# Apps using the OpenTelemetry SDK can push to http://zharp-collector:4317.
-# Example: OTEL_EXPORTER_OTLP_ENDPOINT=http://zharp-collector:4317
+# It shares the host's network (network_mode: host), so it listens on the host's own ports.
+# Apps using the OpenTelemetry SDK push to the host's address:
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://<host IP>:4317 (gRPC) or :4318 (HTTP)
+# From another container on this host, use http://host.docker.internal:4317 with
+#   extra_hosts: ["host.docker.internal:host-gateway"]
 
 services:
   zharp-collector:
@@ -25,20 +28,27 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /:/hostfs:ro
+      # The host's users, so programs and files are owned by names, not numbers.
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/group:/etc/group:ro
       # Where each container's log was read up to, across restarts.
       - zharp-state:/var/lib/zharp-collector
-    ports:
-      - "4317:4317"    # OTLP gRPC  — apps → collector
-      - "4318:4318"    # OTLP HTTP  — apps → collector
-      - "13133:13133"  # Health check
+    # The host's network: its connection table, for each program's traffic (network by
+    # program), and the host's own ports 4317, 4318 and 13133 for applications and health.
+    network_mode: host
+    # The host's processes (read through /hostfs/proc as well), and their cgroups as the host
+    # sees them, so a process in a container is counted with its container, not as a program.
+    pid: host
+    cgroup: host
+    # Read-only: SYS_PTRACE sees which process holds each network connection.
+    cap_add:
+      - SYS_PTRACE
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:13133 || exit 1"]
+      # The image has no shell; the binary checks its own health endpoint.
+      test: ["CMD", "/zharp-collector", "health"]
       interval: 30s
       timeout: 5s
       retries: 3
-    # Give the collector access to read host /proc via /hostfs
-    # (required by hostmetricsreceiver on Linux)
-    pid: host
 
 volumes:
   zharp-state:

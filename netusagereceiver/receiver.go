@@ -61,6 +61,11 @@ type Config struct {
 	ResolveNames bool `mapstructure:"resolve_names"`
 	// Helper is the read-only helper; when it isn't there, the collector's own binary is asked.
 	Helper string `mapstructure:"helper"`
+	// RootPath is where the host's file system is mounted when the agent runs in a container
+	// (/hostfs); its processes are read from <root_path>/proc. The container must share the
+	// host's network (Docker network_mode: host, Kubernetes hostNetwork: true), or nothing is
+	// measured and the page says why.
+	RootPath string `mapstructure:"root_path"`
 }
 
 func (c *Config) Validate() error {
@@ -113,6 +118,9 @@ type netReceiver struct {
 	privileged bool
 	failed     bool
 	names      map[string]string
+	// hostNetwork is false when the agent's container has a network of its own: its connection
+	// table is then the container's, not the host's, and isn't reported.
+	hostNetwork bool
 }
 
 func (r *netReceiver) Start(_ context.Context, _ component.Host) error {
@@ -123,9 +131,14 @@ func (r *netReceiver) Start(_ context.Context, _ component.Host) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
 	r.meter = conns.NewMeter()
-	r.helper = &helper{bin: r.cfg.Helper}
+	r.helper = &helper{bin: r.cfg.Helper, root: r.cfg.RootPath}
 	r.byInode = map[uint32]conns.Program{}
 	r.tried = map[uint32]bool{}
+	r.hostNetwork = true
+	if host, known := conns.HostNetwork(r.cfg.RootPath); known && !host {
+		r.hostNetwork = false
+		r.logger.Warn("zharp_network_usage: the agent's container has its own network, so the host's connections can't be measured; run it with host networking (Docker network_mode: host, Kubernetes hostNetwork: true)")
+	}
 
 	r.wg.Add(2)
 	go func() {
@@ -168,6 +181,9 @@ func (r *netReceiver) Shutdown(context.Context) error {
 }
 
 func (r *netReceiver) sample(ctx context.Context) {
+	if !r.hostNetwork {
+		return
+	}
 	sockets, err := conns.Dump()
 	if err != nil {
 		if !r.failed {
@@ -231,7 +247,7 @@ func (r *netReceiver) report(ctx context.Context, period time.Duration, now time
 			}
 		}
 	}
-	if err := r.next.ConsumeMetrics(ctx, Metrics(flows, names, period, r.privileged, now)); err != nil {
+	if err := r.next.ConsumeMetrics(ctx, Metrics(flows, names, period, r.privileged, r.hostNetwork, now)); err != nil {
 		r.logger.Debug("zharp_network_usage: metrics not accepted", zap.Error(err))
 	}
 }
@@ -255,7 +271,7 @@ func (r *netReceiver) nameOf(ctx context.Context, addr string) string {
 }
 
 // Metrics turns a period's flows into the receiver's metrics: bytes per second over period.
-func Metrics(flows []conns.Flow, names map[string]string, period time.Duration, privileged bool, now time.Time) pmetric.Metrics {
+func Metrics(flows []conns.Flow, names map[string]string, period time.Duration, privileged, hostNetwork bool, now time.Time) pmetric.Metrics {
 	md := pmetric.NewMetrics()
 	sm := md.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty()
 	sm.Scope().SetName(scopeName)
@@ -307,6 +323,7 @@ func Metrics(flows []conns.Flow, names map[string]string, period time.Duration, 
 	dp.SetTimestamp(ts)
 	dp.SetDoubleValue(seconds)
 	dp.Attributes().PutBool("privileged", privileged)
+	dp.Attributes().PutBool("host_network", hostNetwork)
 	return md
 }
 
@@ -314,6 +331,7 @@ func Metrics(flows []conns.Flow, names map[string]string, period time.Duration, 
 // each line sent asks who holds which socket, and it answers with a line of JSON.
 type helper struct {
 	bin   string
+	root  string
 	cmd   *exec.Cmd
 	in    io.WriteCloser
 	lines chan []byte
@@ -353,7 +371,11 @@ func (h *helper) start() error {
 			return err
 		}
 	}
-	cmd := exec.Command(bin, "inspect", "sockets", "--serve")
+	args := []string{"inspect", "sockets", "--serve"}
+	if h.root != "" {
+		args = append(args, "--root", h.root)
+	}
+	cmd := exec.Command(bin, args...)
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return err

@@ -31,6 +31,11 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "zharp-agent.serviceAccountName" . }}
+      {{- if .Values.hostNetwork }}
+      # The node's network: its connection table, for network by program.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
       {{- with .Values.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
@@ -136,6 +141,13 @@ spec:
               mountPath: /hostfs
               readOnly: true
               mountPropagation: HostToContainer
+            # The node's users, so programs and files are owned by names, not numbers.
+            - name: passwd
+              mountPath: /etc/passwd
+              readOnly: true
+            - name: group
+              mountPath: /etc/group
+              readOnly: true
             {{- end }}
       volumes:
         - name: config
@@ -157,4 +169,12 @@ spec:
         - name: hostfs
           hostPath:
             path: /
+        - name: passwd
+          hostPath:
+            path: /etc/passwd
+            type: File
+        - name: group
+          hostPath:
+            path: /etc/group
+            type: File
         {{- end }}

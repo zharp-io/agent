@@ -53,6 +53,9 @@ type Config struct {
 	Children int `mapstructure:"children"`
 	// Helper is the read-only helper; when it isn't there, the collector's own binary scans.
 	Helper string `mapstructure:"helper"`
+	// RootPath is where the host's file system is mounted when the agent runs in a container
+	// (/hostfs): the host's drives are scanned under it and reported by their host paths.
+	RootPath string `mapstructure:"root_path"`
 }
 
 func (c *Config) Validate() error {
@@ -159,9 +162,13 @@ func (r *diskReceiver) run(ctx context.Context) (scan.Result, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, r.cfg.Timeout+time.Minute)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, bin, "inspect", "disk", "--json",
+	args := []string{"inspect", "disk", "--json",
 		"--top", strconv.Itoa(r.cfg.Top), "--children", strconv.Itoa(r.cfg.Children),
-		"--timeout", r.cfg.Timeout.String()).Output()
+		"--timeout", r.cfg.Timeout.String()}
+	if r.cfg.RootPath != "" {
+		args = append(args, "--root", r.cfg.RootPath)
+	}
+	out, err := exec.CommandContext(ctx, bin, args...).Output()
 	if err != nil {
 		return scan.Result{}, err
 	}

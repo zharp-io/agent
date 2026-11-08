@@ -1,5 +1,6 @@
 ## Zharp Collector — Docker Swarm config (identical to deploy/docker/collector-config.yaml)
 ## Automatically collects logs from all containers on each Swarm node.
+## No per-service configuration needed.
 
 extensions:
   health_check:
@@ -13,6 +14,7 @@ receivers:
     endpoint: unix:///var/run/docker.sock
     state_file: /var/lib/zharp-collector/docker_logs.json
 
+  # Receive traces/metrics/logs from apps that use the OpenTelemetry SDK
   otlp:
     protocols:
       grpc:
@@ -20,6 +22,7 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
+  # Host CPU, memory, filesystems, network, load and uptime
   hostmetrics:
     root_path: /hostfs
     collection_interval: 30s
@@ -61,6 +64,7 @@ receivers:
             enabled: false
       system:
 
+  # Per-container CPU, memory, network (pulled from Docker API)
   docker_stats:
     endpoint: unix:///var/run/docker.sock
     collection_interval: 30s
@@ -72,22 +76,74 @@ receivers:
     endpoint: unix:///var/run/docker.sock
     collection_interval: 30s
 
+  # What's using the host, outside its containers (Servers & Containers' "What's using it"), read
+  # through /hostfs. Each program's CPU and memory, every 30s (processes in containers are counted
+  # with their container):
+  hostmetrics/processes:
+    root_path: /hostfs
+    collection_interval: 30s
+    scrapers:
+      process:
+        mute_process_name_error: true
+        mute_process_exe_error: true
+        mute_process_io_error: true
+        mute_process_user_error: true
+        mute_process_cgroup_error: true
+        metrics:
+          process.cpu.time:
+            enabled: false
+          process.cpu.utilization:
+            enabled: true
+          process.memory.usage:
+            enabled: true
+          process.memory.virtual:
+            enabled: false
+          process.disk.io:
+            enabled: false
+        resource_attributes:
+          process.cgroup:
+            enabled: true
+          process.command:
+            enabled: false
+          process.executable.path:
+            enabled: false
+          process.parent_pid:
+            enabled: false
+  # Each drive's biggest folders and files, hourly, at idle priority.
+  zharp_disk_usage:
+    collection_interval: 1h
+    root_path: /hostfs
+  # Each program's TCP traffic and peers, every minute. Needs the compose file's
+  # network_mode: host and SYS_PTRACE.
+  zharp_network_usage:
+    collection_interval: 1m
+    root_path: /hostfs
+
 processors:
   batch:
     send_batch_size: 500
     timeout: 5s
+  # A command line keeps the program and its first two arguments ("node /app/main.js",
+  # "java -jar app.jar"); the rest can hold passwords and tokens and is dropped here.
+  transform/processes:
+    error_mode: ignore
+    metric_statements:
+      - context: resource
+        statements:
+          - 'replace_pattern(attributes["process.command_line"], "^(\"[^\"]*\"|[^ ]+)( +(\"[^\"]*\"|[^ ]+))?( +(\"[^\"]*\"|[^ ]+))?.*$$", "$$1$$2$$4")'
   memory_limiter:
     limit_mib: 256
     spike_limit_mib: 64
     check_interval: 5s
   resourcedetection:
-    detectors: [system, docker, env]
+    detectors: [system, env]
     timeout: 5s
-  # Names the server on host and container metrics: the Docker host's name (the docker detector
-  # asks the daemon, since inside the container the hostname is the container's), the OS,
-  # addresses and, on a cloud VM, provider and region. env carries zharp.agent.version.
+  # Names the server on host and container metrics: the host's own name (the agent shares the
+  # host's network, so its hostname is the host's; Docker's own detector can't find the agent's
+  # container that way and stops the agent), the OS, addresses and, on a cloud VM, provider and
+  # region. env carries zharp.agent.version.
   resourcedetection/host:
-    detectors: [env, docker, system, ec2, gcp, azure]
+    detectors: [env, system, ec2, gcp, azure]
     timeout: 5s
     system:
       resource_attributes:
@@ -104,7 +160,7 @@ processors:
   # The Docker host's attributes (host.name, os.type) on what applications send over OTLP.
   # override: false keeps what the application set itself — its service.name above all.
   resourcedetection/otlp:
-    detectors: [system, docker]
+    detectors: [system]
     timeout: 5s
     override: false
 
@@ -147,6 +203,11 @@ service:
       receivers: [hostmetrics, docker_stats, docker_state]
       processors: [memory_limiter, resourcedetection/host, batch]
       exporters: [otlp_http/zharp, zharp]
+    # What's using the host: programs' CPU, memory and traffic, and drives' biggest folders.
+    metrics/processes:
+      receivers: [hostmetrics/processes, zharp_disk_usage, zharp_network_usage]
+      processors: [memory_limiter, resourcedetection/host, transform/processes, batch]
+      exporters: [otlp_http/zharp]
     # Applications' own OpenTelemetry metrics.
     metrics:
       receivers: [otlp]

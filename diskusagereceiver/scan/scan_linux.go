@@ -27,16 +27,42 @@ var skippedMounts = []string{"/boot/efi", "/snap/", "/var/lib/docker/", "/var/li
 // drives are the mount points of real drives, each device once: where the whole drive is mounted.
 // A bind mount of one of its folders (a volume mounted at /mnt/HC_Volume_1 whose postgresql
 // folder is also mounted at /var/lib/postgresql) isn't the drive, however short its path.
-func drives() ([]string, error) {
-	data, err := os.ReadFile("/proc/self/mountinfo")
+//
+// In a container (root, the host's file system, is /hostfs), the drives are the host's: from its
+// init's mount table (<root>/proc/1/mountinfo), each kept only if the same drive is reachable
+// under root, so a host mount the container can't see isn't scanned as the folder beneath it.
+func drives(root string) ([]string, error) {
+	table := "/proc/self/mountinfo"
+	if root != "" {
+		table = root + "/proc/1/mountinfo"
+	}
+	data, err := os.ReadFile(table)
 	if err != nil {
 		return nil, err
 	}
-	return drivesFrom(string(data), func(mount string) bool {
+	return drivesFrom(string(data), func(mount, device string) bool {
+		path := mount
+		if root != "" {
+			path = root + mount
+		}
 		// A single file bind-mounted from a drive (Docker's /etc/hosts) isn't a drive.
-		info, err := os.Stat(mount)
-		return err == nil && info.IsDir()
+		info, err := os.Stat(path)
+		if err != nil || !info.IsDir() {
+			return false
+		}
+		if root == "" {
+			return true
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		return ok && deviceNumber(uint64(st.Dev)) == device
 	}), nil
+}
+
+// deviceNumber is a stat device as mountinfo writes it, "major:minor".
+func deviceNumber(dev uint64) string {
+	major := (dev>>8)&0xfff | (dev>>32)&^0xfff
+	minor := dev&0xff | (dev>>12)&^0xff
+	return strconv.FormatUint(major, 10) + ":" + strconv.FormatUint(minor, 10)
 }
 
 // drivesFrom picks the drives out of /proc/self/mountinfo's lines:
@@ -46,7 +72,7 @@ func drives() ([]string, error) {
 // (fields: id, parent, major:minor, the folder of the drive mounted, where, options, optional
 // fields up to "-", then the file system type and the source). Per device, a mount of the drive's
 // own root wins over a mount of one of its folders; among equals, the shortest path.
-func drivesFrom(mountinfo string, isDir func(string) bool) []string {
+func drivesFrom(mountinfo string, usable func(mount, device string) bool) []string {
 	type pick struct {
 		mount   string
 		wholeFS bool
@@ -66,7 +92,7 @@ func drivesFrom(mountinfo string, isDir func(string) bool) []string {
 			continue
 		}
 		device, root, mount := fields[2], unescapeMount(fields[3]), unescapeMount(fields[4])
-		if skippedMount(mount) || !isDir(mount) {
+		if skippedMount(mount) || !usable(mount, device) {
 			continue
 		}
 		candidate := pick{mount: mount, wholeFS: root == "/"}

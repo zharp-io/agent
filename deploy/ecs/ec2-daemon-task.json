@@ -58,6 +58,16 @@
           "sourceVolume": "collector-state",
           "containerPath": "/var/lib/zharp-collector",
           "readOnly": false
+        },
+        {
+          "sourceVolume": "passwd",
+          "containerPath": "/etc/passwd",
+          "readOnly": true
+        },
+        {
+          "sourceVolume": "group",
+          "containerPath": "/etc/group",
+          "readOnly": true
         }
       ],
       "healthCheck": {
@@ -83,7 +93,14 @@
       "resourceRequirements": [],
       "cpu": 256,
       "memory": 256,
-      "memoryReservation": 128
+      "memoryReservation": 128,
+      "linuxParameters": {
+        "capabilities": {
+          "add": [
+            "SYS_PTRACE"
+          ]
+        }
+      }
     }
   ],
   "volumes": [
@@ -115,6 +132,18 @@
       "name": "collector-state",
       "host": {
         "sourcePath": "/var/lib/zharp-collector"
+      }
+    },
+    {
+      "name": "passwd",
+      "host": {
+        "sourcePath": "/etc/passwd"
+      }
+    },
+    {
+      "name": "group",
+      "host": {
+        "sourcePath": "/etc/group"
       }
     }
   ]

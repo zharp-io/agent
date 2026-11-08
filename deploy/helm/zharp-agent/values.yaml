@@ -46,6 +46,22 @@ metrics:
   collectionInterval: 30s
   # The kubelet's serving certificate is self-signed on most clusters.
   kubeletInsecureSkipVerify: true
+  # What's using each node, outside its pods (Servers & Containers' "What's using it"), all read
+  # from the host through /hostfs (needs host: true):
+  # each program's CPU and memory, every 30s;
+  programs: true
+  # each drive's biggest folders and files, hourly, at idle priority (needs DAC_READ_SEARCH,
+  # below, to list every folder);
+  diskUsage: true
+  # each program's TCP traffic and peers, every minute (needs hostNetwork, below, and
+  # SYS_PTRACE to see which program holds each connection).
+  networkByProgram: true
+
+# Share the node's network, as node agents do: network by program reads the node's connection
+# table, which a pod with its own network can't see. The agent's ports (4317, 4318, 13133) are
+# then opened on the node itself. Set false (and metrics.networkByProgram false) where host
+# networking isn't allowed.
+hostNetwork: true
 
 traces:
   # Applications in the cluster send OTLP to this agent: grpc 4317, http 4318. Their traces and
@@ -98,7 +114,10 @@ podLabels: {}
 # Extra environment variables for the agent container.
 extraEnv: []
 
-# The agent reads /var/log/pods, which only root can read on most nodes.
+# The agent reads /var/log/pods, which only root can read on most nodes. Of root's
+# capabilities it keeps two, both read-only: DAC_READ_SEARCH lists every folder for disk usage
+# (names and sizes, never contents), SYS_PTRACE sees which process holds each network connection.
+# Drop them (capabilities.add: []) with metrics.diskUsage and metrics.networkByProgram off.
 securityContext:
   runAsUser: 0
   runAsGroup: 0
@@ -106,6 +125,7 @@ securityContext:
   allowPrivilegeEscalation: false
   capabilities:
     drop: [ALL]
+    add: [DAC_READ_SEARCH, SYS_PTRACE]
 
 updateStrategy:
   type: RollingUpdate

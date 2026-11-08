@@ -19,7 +19,10 @@ func Dump() ([]Socket, error) { return nil, errUnsupported }
 func Watch(context.Context, func(Socket)) error { return errUnsupported }
 
 // Processes is Linux only.
-func Processes() Owners { return Owners{} }
+func Processes(string) Owners { return Owners{} }
+
+// HostNetwork is Linux only.
+func HostNetwork(string) (bool, bool) { return false, false }
 
 // UserName is Linux only.
 func UserName(uid uint32) string { return "" }

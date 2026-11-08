@@ -14,7 +14,7 @@ func TestMetricsAreRatesPerProgramPeerAndDirection(t *testing.T) {
 		{Program: conns.Program{Owner: "www-data"}, Role: "server", Port: 80, Scope: "public", Received: 600},
 		{Role: "other", Scope: "private", Sent: 120, Other: true},
 	}
-	md := Metrics(flows, map[string]string{"140.82.112.3": "lb-140-82-112-3-iad.github.com"}, time.Minute, true, time.Unix(1700000000, 0))
+	md := Metrics(flows, map[string]string{"140.82.112.3": "lb-140-82-112-3-iad.github.com"}, time.Minute, true, true, time.Unix(1700000000, 0))
 
 	metrics := md.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics()
 	if metrics.Len() != 2 || metrics.At(0).Name() != "zharp.network.io" || metrics.At(1).Name() != "zharp.network.scan" {

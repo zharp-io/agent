@@ -9,7 +9,7 @@ import (
 
 // Folder sizes are collected on Linux; elsewhere a scan needs its drives named in Options.Mounts.
 
-func drives() ([]string, error) {
+func drives(string) ([]string, error) {
 	return nil, errors.New("pass the folders to scan (drive detection is Linux only)")
 }
 
