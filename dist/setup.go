@@ -175,6 +175,9 @@ func writeConfig(f *os.File, apiKey string, metricsReceivers []string, extraBloc
 
 	w("receivers:\n")
 	w(hostmetricsBlock)
+	if collectsProcesses() {
+		w(processReceiverBlock)
+	}
 	for _, b := range extraBlocks {
 		w(b + "\n")
 	}
@@ -186,6 +189,9 @@ func writeConfig(f *os.File, apiKey string, metricsReceivers []string, extraBloc
 	w("  memory_limiter:\n    limit_mib: 128\n    spike_limit_mib: 32\n    check_interval: 5s\n")
 	w("  resourcedetection:\n    detectors: [system, env]\n    timeout: 5s\n")
 	w(hostProcessorBlock)
+	if collectsProcesses() {
+		w(processTransformBlock)
+	}
 	w(otlpProcessorBlock)
 
 	w("\nexporters:\n")
@@ -196,6 +202,9 @@ func writeConfig(f *os.File, apiKey string, metricsReceivers []string, extraBloc
 	w(otlpPipelinesBlock)
 	hostIDs, otherIDs := splitMetricReceivers(metricsReceivers)
 	w(hostPipelineBlock(hostIDs))
+	if collectsProcesses() {
+		w(processPipelineBlock)
+	}
 	if len(otherIDs) > 0 {
 		w(metricsPipelineBlock(otherIDs))
 	}

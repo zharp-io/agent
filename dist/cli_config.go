@@ -295,6 +295,9 @@ func buildConfig(spec configSpec) string {
 
 	sb.WriteString("receivers:\n")
 	sb.WriteString(hostmetricsBlock)
+	if collectsProcesses() {
+		sb.WriteString(processReceiverBlock)
+	}
 
 	// One filelog/<name> receiver per log source, each stamped with its service name.
 	for _, src := range logSources {
@@ -340,6 +343,9 @@ func buildConfig(spec configSpec) string {
 	sb.WriteString("    detectors: [system, env]\n")
 	sb.WriteString("    timeout: 5s\n")
 	sb.WriteString(hostProcessorBlock)
+	if collectsProcesses() {
+		sb.WriteString(processTransformBlock)
+	}
 	if tracing {
 		sb.WriteString(otlpProcessorBlock)
 	}
@@ -390,6 +396,9 @@ func buildConfig(spec configSpec) string {
 	// Host and container metrics to the OTLP ingest; databases and brokers to the zharp exporter.
 	hostIDs, otherIDs := splitMetricReceivers(metricsReceivers)
 	sb.WriteString(hostPipelineBlock(hostIDs))
+	if collectsProcesses() {
+		sb.WriteString(processPipelineBlock)
+	}
 	if len(otherIDs) > 0 {
 		sb.WriteString(metricsPipelineBlock(otherIDs))
 	}

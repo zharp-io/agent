@@ -186,6 +186,11 @@ func mergeSources(content string, inventory []InventoryItem, detected []ServiceO
 		res.config = next
 		res.migrated = append(res.migrated, notes...)
 	}
+	// Programs' CPU and memory, for what's using a server's resources (agent 1.9.4).
+	if next, notes := withProcessMetrics(res.config); next != res.config {
+		res.config = next
+		res.migrated = append(res.migrated, notes...)
+	}
 
 	// Metric receivers. The first is hostmetrics, always there; the rest pair with their blocks.
 	for i, id := range plan.metricsReceivers[1:] {
@@ -551,6 +556,8 @@ func receiverLabels(rs []configReceiver) []string {
 			continue // MySQL's connection limit, part of MySQL
 		case base == "filelog" && name == "pm2":
 			label = "PM2 app logs"
+		case base == "hostmetrics" && name == "processes":
+			label = "Processes"
 		case base == "filelog" && name != "":
 			label = name + " logs"
 		case label == "":
