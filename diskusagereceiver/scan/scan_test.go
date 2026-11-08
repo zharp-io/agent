@@ -33,21 +33,70 @@ func TestBiggestFoldersAndTheirChildren(t *testing.T) {
 	if !m.Complete || m.Files != 5 {
 		t.Fatalf("complete %v, files %d", m.Complete, m.Files)
 	}
-	if len(m.Folders) != 2 {
-		t.Fatalf("Top is 2: %+v", m.Folders)
+	folders := 0
+	for _, f := range m.Folders {
+		if !f.File {
+			folders++
+		}
+	}
+	if folders != 2 {
+		t.Fatalf("Top is 2 folders (big files at the root are listed beside them): %+v", m.Folders)
 	}
 	first := m.Folders[0]
 	if filepath.Base(first.Path) != "var" || first.Bytes < 1_100_000 {
 		t.Fatalf("var is biggest with both its folders: %+v", first)
 	}
-	if len(first.Children) != 1 || filepath.Base(first.Children[0].Path) != "lib" {
-		t.Fatalf("var's biggest child is lib: %+v", first.Children)
+	var subfolders []Folder
+	for _, c := range first.Children {
+		if !c.File {
+			subfolders = append(subfolders, c)
+		}
+	}
+	if len(subfolders) != 1 || filepath.Base(subfolders[0].Path) != "lib" {
+		t.Fatalf("var's biggest child (Children is 1) is lib: %+v", first.Children)
 	}
 	if filepath.Base(m.Folders[1].Path) != "home" {
 		t.Fatalf("home is second: %+v", m.Folders[1])
 	}
 	if m.Bytes < 1_451_000 {
 		t.Fatalf("the drive counts every file: %d", m.Bytes)
+	}
+}
+
+func TestFollowsTheSpaceDownToTheFolderAndFileHoldingIt(t *testing.T) {
+	root := t.TempDir()
+	// /home/zharp holds 10 MB, nearly all in one log file four levels down.
+	write(t, filepath.Join(root, "home", "zharp", ".pm2", "logs", "api-out.log"), 9_000_000)
+	write(t, filepath.Join(root, "home", "zharp", "app", "dist", "main.js"), 500_000)
+	write(t, filepath.Join(root, "home", "zharp", "notes.txt"), 10_000) // under 1%: in its folder's total only
+	write(t, filepath.Join(root, "swapfile"), 2_000_000)                // a big file at the drive's root
+
+	res, err := Run(Options{Top: 12, Children: 4, Timeout: time.Minute, Mounts: []string{root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	folders := res.Mounts[0].Folders
+	find := func(list []Folder, base string) *Folder {
+		for i := range list {
+			if filepath.Base(filepath.FromSlash(list[i].Path)) == base {
+				return &list[i]
+			}
+		}
+		t.Fatalf("%s not among %+v", base, list)
+		return nil
+	}
+	if swap := find(folders, "swapfile"); !swap.File {
+		t.Fatal("the swap file is reported as a file at the top")
+	}
+	zharp := find(find(folders, "home").Children, "zharp")
+	logs := find(find(zharp.Children, ".pm2").Children, "logs")
+	if log := find(logs.Children, "api-out.log"); !log.File || log.Bytes < 9_000_000 {
+		t.Fatalf("the log file is under its folder: %+v", log)
+	}
+	for _, f := range zharp.Children {
+		if filepath.Base(filepath.FromSlash(f.Path)) == "notes.txt" {
+			t.Fatal("a file under 1% of the drive isn't listed")
+		}
 	}
 }
 

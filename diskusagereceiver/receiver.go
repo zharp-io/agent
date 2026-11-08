@@ -189,7 +189,9 @@ func Metrics(res scan.Result, now time.Time) pmetric.Metrics {
 	scans.SetName("zharp.disk.scan")
 	scans.SetUnit("s")
 
-	folder := func(mount, parent string, f scan.Folder) {
+	// A folder and everything reported under it, each naming its parent ("" at the top).
+	var folder func(mount, parent string, f scan.Folder)
+	folder = func(mount, parent string, f scan.Folder) {
 		dp := folders.Gauge().DataPoints().AppendEmpty()
 		dp.SetTimestamp(ts)
 		dp.SetIntValue(f.Bytes)
@@ -198,6 +200,12 @@ func Metrics(res scan.Result, now time.Time) pmetric.Metrics {
 		a.PutStr("path", f.Path)
 		a.PutStr("parent", parent)
 		a.PutStr("owner", f.Owner)
+		if f.File {
+			a.PutBool("file", true)
+		}
+		for _, c := range f.Children {
+			folder(mount, f.Path, c)
+		}
 	}
 	folders.SetEmptyGauge()
 	owners.SetEmptyGauge()
@@ -205,9 +213,6 @@ func Metrics(res scan.Result, now time.Time) pmetric.Metrics {
 	for _, m := range res.Mounts {
 		for _, f := range m.Folders {
 			folder(m.Mount, "", f)
-			for _, c := range f.Children {
-				folder(m.Mount, f.Path, c)
-			}
 		}
 		for _, o := range m.Owners {
 			dp := owners.Gauge().DataPoints().AppendEmpty()

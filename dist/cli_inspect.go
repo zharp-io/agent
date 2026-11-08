@@ -217,17 +217,19 @@ func networkPeer(f conns.Flow) string {
 	return "everything else (" + where + ")"
 }
 
-// cliInspectDisk measures what takes each drive's space, like du: the biggest folders, two levels
-// down, and the space each user owns. --json is what the zharp_disk_usage receiver reads.
+// cliInspectDisk measures what takes each drive's space, like du and ncdu: the biggest folders,
+// followed down to the folders and files holding the space, and the space each user owns. --json
+// is what the zharp_disk_usage receiver reads.
 func cliInspectDisk(args []string) {
 	fs := flag.NewFlagSet("inspect disk", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "print JSON (what the collector reads)")
 	top := fs.Int("top", 12, "top-level folders per drive")
-	children := fs.Int("children", 4, "sub-folders under each")
+	children := fs.Int("children", 4, "sub-folders under each, of those holding 1% of the drive or more")
+	depth := fs.Int("depth", 6, "folder levels followed down")
 	timeout := fs.Duration("timeout", 4*time.Minute, "stop after this long and report what was measured")
 	_ = fs.Parse(args)
 
-	res, err := scan.Run(scan.Options{Depth: 2, Top: *top, Children: *children, Timeout: *timeout, Mounts: fs.Args()})
+	res, err := scan.Run(scan.Options{Depth: *depth, Top: *top, Children: *children, Timeout: *timeout, Mounts: fs.Args()})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "  [!] "+err.Error())
 		os.Exit(1)
@@ -246,12 +248,18 @@ func printDiskUsage(res scan.Result) {
 			fmt.Print("  (stopped at the time limit)")
 		}
 		fmt.Println()
-		for _, f := range m.Folders {
-			fmt.Printf("  %9s  %s%s\n", humanBytes(f.Bytes), f.Path, ownedBy(f.Owner))
-			for _, c := range f.Children {
-				fmt.Printf("  %9s    %s%s\n", humanBytes(c.Bytes), c.Path, ownedBy(c.Owner))
+		var tree func(folders []scan.Folder, indent string)
+		tree = func(folders []scan.Folder, indent string) {
+			for _, f := range folders {
+				kind := ""
+				if f.File {
+					kind = "  [file]"
+				}
+				fmt.Printf("  %9s  %s%s%s%s\n", humanBytes(f.Bytes), indent, f.Path, kind, ownedBy(f.Owner))
+				tree(f.Children, indent+"  ")
 			}
 		}
+		tree(m.Folders, "")
 		if len(m.Owners) > 0 {
 			fmt.Println("  By owner:")
 			for _, o := range m.Owners {
