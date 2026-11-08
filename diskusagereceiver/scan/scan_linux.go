@@ -24,39 +24,64 @@ var realFileSystems = map[string]bool{
 // skippedMounts are mount points that belong to the system or to container runtimes.
 var skippedMounts = []string{"/boot/efi", "/snap/", "/var/lib/docker/", "/var/lib/kubelet/", "/var/lib/containers/", "/run/", "/dev/", "/sys/", "/proc/"}
 
-// drives are the mount points of real drives, each device once (a bind mount isn't a drive).
+// drives are the mount points of real drives, each device once: where the whole drive is mounted.
+// A bind mount of one of its folders (a volume mounted at /mnt/HC_Volume_1 whose postgresql
+// folder is also mounted at /var/lib/postgresql) isn't the drive, however short its path.
 func drives() ([]string, error) {
-	f, err := os.Open("/proc/self/mounts")
+	data, err := os.ReadFile("/proc/self/mountinfo")
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	byDevice := map[string]string{}
-	sc := bufio.NewScanner(f)
+	return drivesFrom(string(data), func(mount string) bool {
+		// A single file bind-mounted from a drive (Docker's /etc/hosts) isn't a drive.
+		info, err := os.Stat(mount)
+		return err == nil && info.IsDir()
+	}), nil
+}
+
+// drivesFrom picks the drives out of /proc/self/mountinfo's lines:
+//
+//	36 35 98:0 /postgresql /var/lib/postgresql rw,noatime - ext4 /dev/sdb rw
+//
+// (fields: id, parent, major:minor, the folder of the drive mounted, where, options, optional
+// fields up to "-", then the file system type and the source). Per device, a mount of the drive's
+// own root wins over a mount of one of its folders; among equals, the shortest path.
+func drivesFrom(mountinfo string, isDir func(string) bool) []string {
+	type pick struct {
+		mount   string
+		wholeFS bool
+	}
+	byDevice := map[string]pick{}
+	sc := bufio.NewScanner(strings.NewReader(mountinfo))
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
-		if len(fields) < 3 || !realFileSystems[fields[2]] {
+		sep := -1
+		for i, f := range fields {
+			if f == "-" {
+				sep = i
+				break
+			}
+		}
+		if len(fields) < 5 || sep < 0 || sep+1 >= len(fields) || !realFileSystems[fields[sep+1]] {
 			continue
 		}
-		mount := unescapeMount(fields[1])
-		if skippedMount(mount) {
+		device, root, mount := fields[2], unescapeMount(fields[3]), unescapeMount(fields[4])
+		if skippedMount(mount) || !isDir(mount) {
 			continue
 		}
-		// A single file bind-mounted from a drive (Docker's /etc/hosts) isn't a drive.
-		if info, err := os.Stat(mount); err != nil || !info.IsDir() {
-			continue
-		}
-		device := fields[0]
-		if current, ok := byDevice[device]; !ok || len(mount) < len(current) {
-			byDevice[device] = mount
+		candidate := pick{mount: mount, wholeFS: root == "/"}
+		current, ok := byDevice[device]
+		if !ok || (candidate.wholeFS && !current.wholeFS) ||
+			(candidate.wholeFS == current.wholeFS && len(candidate.mount) < len(current.mount)) {
+			byDevice[device] = candidate
 		}
 	}
 	mounts := make([]string, 0, len(byDevice))
-	for _, m := range byDevice {
-		mounts = append(mounts, m)
+	for _, p := range byDevice {
+		mounts = append(mounts, p.mount)
 	}
 	sort.Strings(mounts) // "/" first
-	return mounts, sc.Err()
+	return mounts
 }
 
 func skippedMount(mount string) bool {
