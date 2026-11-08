@@ -21,6 +21,8 @@ if [ "$(uname)" = "Linux" ]; then
   HELPER=/usr/local/lib/zharp-collector/zharp-inspect
 
   systemctl is-active zharp-collector
+  # The service runs the copy in /usr/local/bin, not this one (a home folder its user can't enter).
+  systemctl show -p ExecStart zharp-collector | grep -q 'path=/usr/local/bin/zharp-collector'
   # This release's receivers are in the config install wrote.
   for receiver in hostmetrics/processes zharp_disk_usage zharp_network_usage; do
     sudo grep -q "^  $receiver:" "$CONFIG"

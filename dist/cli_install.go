@@ -349,6 +349,10 @@ func finishInstall(yaml string, envVars map[string]string, hasDocker bool, inven
 		fmt.Fprintf(os.Stderr, "  [!] Cannot determine binary path: %v\n", err)
 		os.Exit(1)
 	}
+	if binaryPath, err = serviceBinary(binaryPath); err != nil {
+		fmt.Fprintf(os.Stderr, "  [!] Cannot put the agent in %s: %v\n", installedBinaryPath, err)
+		os.Exit(1)
+	}
 
 	cfg := &svcInstallConfig{
 		binaryPath: binaryPath,
