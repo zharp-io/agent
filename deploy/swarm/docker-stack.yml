@@ -13,6 +13,10 @@
 #   docker config rm zharp_collector_config
 #   docker config create zharp_collector_config ./collector-config.yaml
 #   docker service update --force zharp_collector
+#
+# Each program's network traffic (network by program) needs the node's network, which a stack
+# can't give a service (Docker refuses the host network in stack files). deploy.sh, next to this
+# file, creates the same service with it; everything else works the same either way.
 
 version: "3.9"
 
@@ -21,6 +25,8 @@ services:
     image: ghcr.io/zharp-io/agent:latest
     # The Docker socket is root-only.
     user: "0:0"
+    # The node's name, so the server is named after it, not after this container.
+    hostname: "{{.Node.Hostname}}"
     deploy:
       mode: global          # exactly one container per node
       restart_policy:
@@ -50,15 +56,18 @@ services:
     # Read-only: SYS_PTRACE sees which process holds each network connection.
     cap_add:
       - SYS_PTRACE
-    # The node's network: its connection table, for each program's traffic, and the node's own
-    # ports 4317, 4318 and 13133 (apps on the same node send OTLP to localhost:4317).
-    networks:
-      - hostnet
-
-networks:
-  hostnet:
-    external: true
-    name: host
+    ports:
+      # host mode: port binds on the node directly, not load-balanced across nodes
+      # apps on the same node use localhost:4317 to send OTLP
+      - target: 4317
+        published: 4317
+        mode: host
+      - target: 4318
+        published: 4318
+        mode: host
+      - target: 13133
+        published: 13133
+        mode: host
 
 volumes:
   zharp-state:
