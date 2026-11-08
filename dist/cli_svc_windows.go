@@ -74,11 +74,9 @@ func svcInstall(cfg *svcInstallConfig) error {
 		return fmt.Errorf("start service: %w: %s", err, out)
 	}
 
-	time.Sleep(2 * time.Second)
-
-	// Verify.
-	out, _ := exec.Command("sc.exe", "query", winSvcName).Output()
-	if strings.Contains(string(out), "RUNNING") {
+	// Verify. A large binary takes a while to start (and an antivirus may scan it first), so a
+	// starting service is given time before it's reported as not started.
+	if waitForServiceState("RUNNING", 30*time.Second) {
 		uiOK("Service started.")
 	} else {
 		uiWarn("Service may not have started. Check logs:")
@@ -116,17 +114,38 @@ func svcLogs() error {
 
 // svcUninstall stops and deletes the service, then removes config.
 func svcUninstall() error {
-	exec.Command("sc.exe", "stop", winSvcName).Run()   //nolint:errcheck
+	exec.Command("sc.exe", "stop", winSvcName).Run() //nolint:errcheck
+	waitForServiceState("STOPPED", 30*time.Second)
 	exec.Command("sc.exe", "delete", winSvcName).Run() //nolint:errcheck
 	os.RemoveAll(installConfigDir())                    //nolint:errcheck
 	return nil
 }
 
-// svcRestart stops then starts the Windows service.
+// svcRestart stops then starts the Windows service. Windows stops a service asynchronously, and a
+// start sent while it's still stopping fails (1056: already running), so the stop is waited for.
 func svcRestart() error {
 	exec.Command("sc.exe", "stop", winSvcName).Run() //nolint:errcheck
-	time.Sleep(2 * time.Second)
-	return exec.Command("sc.exe", "start", winSvcName).Run()
+	waitForServiceState("STOPPED", 30*time.Second)
+	if out, err := exec.Command("sc.exe", "start", winSvcName).CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// waitForServiceState waits until sc.exe reports the service in state (RUNNING, STOPPED), up to
+// timeout, and reports whether it got there.
+func waitForServiceState(state string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		out, _ := exec.Command("sc.exe", "query", winSvcName).Output()
+		if strings.Contains(string(out), state) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 // printDoneCommands prints useful post-install commands for Windows.
