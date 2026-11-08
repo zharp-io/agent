@@ -196,6 +196,11 @@ func mergeSources(content string, inventory []InventoryItem, detected []ServiceO
 		res.config = next
 		res.migrated = append(res.migrated, notes...)
 	}
+	// Each program's network traffic (agent 1.9.6).
+	if next, notes := withNetworkUsage(res.config); next != res.config {
+		res.config = next
+		res.migrated = append(res.migrated, notes...)
+	}
 
 	// Metric receivers. The first is hostmetrics, always there; the rest pair with their blocks.
 	for i, id := range plan.metricsReceivers[1:] {
@@ -565,6 +570,8 @@ func receiverLabels(rs []configReceiver) []string {
 			label = "Processes"
 		case base == "zharp_disk_usage":
 			label = "Disk usage by folder"
+		case base == "zharp_network_usage":
+			label = "Network by program"
 		case base == "filelog" && name != "":
 			label = name + " logs"
 		case label == "":

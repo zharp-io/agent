@@ -171,6 +171,9 @@ func TestMergeAddsOnlyWhatIsMissing(t *testing.T) {
 	if collectsDiskUsage() {
 		want = strings.Replace(want, ",otlp,", ",otlp,zharp_disk_usage,", 1)
 	}
+	if collectsNetworkUsage() {
+		want = strings.Replace(want, ",zharp_disk_usage,", ",zharp_disk_usage,zharp_network_usage,", 1)
+	}
 	if got := strings.Join(receiverIDList(t, after), ","); got != want {
 		t.Errorf("receivers: %s", got)
 	}
@@ -326,7 +329,7 @@ func TestMergeAddsTracingAndLogsPipelineToOldConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"\n  otlp:\n", "    traces/otlp:\n", "    logs/otlp:\n", "\n  otlp_http/zharp:\n","      receivers: [journald]\n      processors: [memory_limiter, zharp_logs, resourcedetection, batch]\n"} {
+	for _, want := range []string{"\n  otlp:\n", "    traces/otlp:\n", "    logs/otlp:\n", "\n  otlp_http/zharp:\n", "      receivers: [journald]\n      processors: [memory_limiter, zharp_logs, resourcedetection, batch]\n"} {
 		if !strings.Contains(res.config, want) {
 			t.Errorf("missing %q:\n%s", want, res.config)
 		}
@@ -650,6 +653,9 @@ func TestReceiverLabels(t *testing.T) {
 	}
 	if collectsDiskUsage() {
 		want = strings.Replace(want, "Application traces and logs, ", "Application traces and logs, Disk usage by folder, ", 1)
+	}
+	if collectsNetworkUsage() {
+		want = strings.Replace(want, "Disk usage by folder, ", "Disk usage by folder, Network by program, ", 1)
 	}
 	if got := strings.Join(receiverLabels(rs), ", "); got != want {
 		t.Errorf("labels: %s", got)

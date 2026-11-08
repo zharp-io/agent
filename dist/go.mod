@@ -23,6 +23,7 @@ require (
 	github.com/open-telemetry/opentelemetry-collector-contrib/receiver/statsdreceiver v0.154.0
 	github.com/zharp-io/agent/dockerlogsreceiver v0.0.1
 	github.com/zharp-io/agent/diskusagereceiver v0.0.1
+	github.com/zharp-io/agent/netusagereceiver v0.0.1
 	github.com/zharp-io/agent/logrules v0.0.1
 	github.com/zharp-io/agent/zharpexporter v0.0.1
 	go.opentelemetry.io/collector/component v1.60.0
@@ -409,6 +410,8 @@ replace github.com/zharp-io/agent/zharpexporter v0.0.1 => ../zharpexporter
 replace github.com/zharp-io/agent/dockerlogsreceiver v0.0.1 => ../dockerlogsreceiver
 
 replace github.com/zharp-io/agent/diskusagereceiver v0.0.1 => ../diskusagereceiver
+
+replace github.com/zharp-io/agent/netusagereceiver v0.0.1 => ../netusagereceiver
 
 replace github.com/zharp-io/agent/zharplogsprocessor v0.0.1 => ../zharplogsprocessor
 

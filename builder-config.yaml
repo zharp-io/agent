@@ -31,6 +31,8 @@ receivers:
   # What takes each drive's space: biggest folders and space per user, hourly (Linux).
   - gomod: github.com/zharp-io/agent/diskusagereceiver v0.0.1
     path: ./diskusagereceiver
+  - gomod: github.com/zharp-io/agent/netusagereceiver v0.0.1
+    path: ./netusagereceiver
   - gomod: github.com/zharp-io/agent/dockerlogsreceiver v0.0.1
     import: github.com/zharp-io/agent/dockerlogsreceiver/dockerstatereceiver
     name: dockerstatereceiver

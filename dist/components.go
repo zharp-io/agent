@@ -3,42 +3,43 @@
 package main
 
 import (
+	healthcheckextension "github.com/open-telemetry/opentelemetry-collector-contrib/extension/healthcheckextension"
+	filestorage "github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/filestorage"
+	groupbyattrsprocessor "github.com/open-telemetry/opentelemetry-collector-contrib/processor/groupbyattrsprocessor"
+	k8sattributesprocessor "github.com/open-telemetry/opentelemetry-collector-contrib/processor/k8sattributesprocessor"
+	resourcedetectionprocessor "github.com/open-telemetry/opentelemetry-collector-contrib/processor/resourcedetectionprocessor"
+	transformprocessor "github.com/open-telemetry/opentelemetry-collector-contrib/processor/transformprocessor"
+	dockerstatsreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/dockerstatsreceiver"
+	filelogreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver"
+	fluentforwardreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/fluentforwardreceiver"
+	hostmetricsreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver"
+	journaldreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/journaldreceiver"
+	kubeletstatsreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver"
+	mongodbreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mongodbreceiver"
+	mysqlreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mysqlreceiver"
+	postgresqlreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver"
+	redisreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/redisreceiver"
+	sqlqueryreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlqueryreceiver"
+	statsdreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/statsdreceiver"
+	diskusagereceiver "github.com/zharp-io/agent/diskusagereceiver"
+	dockerlogsreceiver "github.com/zharp-io/agent/dockerlogsreceiver"
+	dockerstatereceiver "github.com/zharp-io/agent/dockerlogsreceiver/dockerstatereceiver"
+	netusagereceiver "github.com/zharp-io/agent/netusagereceiver"
+	zharpexporter "github.com/zharp-io/agent/zharpexporter"
+	zharplogsprocessor "github.com/zharp-io/agent/zharplogsprocessor"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/connector"
 	"go.opentelemetry.io/collector/exporter"
+	otlphttpexporter "go.opentelemetry.io/collector/exporter/otlphttpexporter"
 	"go.opentelemetry.io/collector/extension"
+	zpagesextension "go.opentelemetry.io/collector/extension/zpagesextension"
 	"go.opentelemetry.io/collector/otelcol"
 	"go.opentelemetry.io/collector/processor"
-	"go.opentelemetry.io/collector/receiver"
-	otelconftelemetry "go.opentelemetry.io/collector/service/telemetry/otelconftelemetry"
-	zharpexporter "github.com/zharp-io/agent/zharpexporter"
-	otlphttpexporter "go.opentelemetry.io/collector/exporter/otlphttpexporter"
-	zpagesextension "go.opentelemetry.io/collector/extension/zpagesextension"
-	healthcheckextension "github.com/open-telemetry/opentelemetry-collector-contrib/extension/healthcheckextension"
-	filestorage "github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/filestorage"
 	batchprocessor "go.opentelemetry.io/collector/processor/batchprocessor"
 	memorylimiterprocessor "go.opentelemetry.io/collector/processor/memorylimiterprocessor"
-	resourcedetectionprocessor "github.com/open-telemetry/opentelemetry-collector-contrib/processor/resourcedetectionprocessor"
-	k8sattributesprocessor "github.com/open-telemetry/opentelemetry-collector-contrib/processor/k8sattributesprocessor"
-	zharplogsprocessor "github.com/zharp-io/agent/zharplogsprocessor"
-	transformprocessor "github.com/open-telemetry/opentelemetry-collector-contrib/processor/transformprocessor"
-	groupbyattrsprocessor "github.com/open-telemetry/opentelemetry-collector-contrib/processor/groupbyattrsprocessor"
+	"go.opentelemetry.io/collector/receiver"
 	otlpreceiver "go.opentelemetry.io/collector/receiver/otlpreceiver"
-	filelogreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver"
-	hostmetricsreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver"
-	dockerstatsreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/dockerstatsreceiver"
-	postgresqlreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver"
-	redisreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/redisreceiver"
-	mongodbreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mongodbreceiver"
-	mysqlreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mysqlreceiver"
-	sqlqueryreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlqueryreceiver"
-	journaldreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/journaldreceiver"
-	dockerlogsreceiver "github.com/zharp-io/agent/dockerlogsreceiver"
-	dockerstatereceiver "github.com/zharp-io/agent/dockerlogsreceiver/dockerstatereceiver"
-	diskusagereceiver "github.com/zharp-io/agent/diskusagereceiver"
-	fluentforwardreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/fluentforwardreceiver"
-	statsdreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/statsdreceiver"
-	kubeletstatsreceiver "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver"
+	otelconftelemetry "go.opentelemetry.io/collector/service/telemetry/otelconftelemetry"
 )
 
 type aliasProvider interface{ DeprecatedAlias() component.Type }
@@ -70,9 +71,9 @@ func components() (otelcol.Factories, error) {
 		return otelcol.Factories{}, err
 	}
 	factories.ExtensionModules = makeModulesMap(factories.Extensions, map[component.Type]string{
-		zpagesextension.NewFactory().Type(): "go.opentelemetry.io/collector/extension/zpagesextension v0.154.0",
+		zpagesextension.NewFactory().Type():      "go.opentelemetry.io/collector/extension/zpagesextension v0.154.0",
 		healthcheckextension.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/extension/healthcheckextension v0.154.0",
-		filestorage.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/filestorage v0.154.0",
+		filestorage.NewFactory().Type():          "github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/filestorage v0.154.0",
 	})
 
 	factories.Receivers, err = otelcol.MakeFactoryMap[receiver.Factory](
@@ -89,6 +90,7 @@ func components() (otelcol.Factories, error) {
 		dockerlogsreceiver.NewFactory(),
 		dockerstatereceiver.NewFactory(),
 		diskusagereceiver.NewFactory(),
+		netusagereceiver.NewFactory(),
 		fluentforwardreceiver.NewFactory(),
 		statsdreceiver.NewFactory(),
 		kubeletstatsreceiver.NewFactory(),
@@ -97,22 +99,23 @@ func components() (otelcol.Factories, error) {
 		return otelcol.Factories{}, err
 	}
 	factories.ReceiverModules = makeModulesMap(factories.Receivers, map[component.Type]string{
-		otlpreceiver.NewFactory().Type(): "go.opentelemetry.io/collector/receiver/otlpreceiver v0.154.0",
-		filelogreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver v0.154.0",
-		hostmetricsreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver v0.154.0",
-		dockerstatsreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/dockerstatsreceiver v0.154.0",
-		postgresqlreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver v0.154.0",
-		redisreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/redisreceiver v0.154.0",
-		mongodbreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mongodbreceiver v0.154.0",
-		mysqlreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mysqlreceiver v0.154.0",
-		sqlqueryreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlqueryreceiver v0.154.0",
-		journaldreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/journaldreceiver v0.154.0",
-		dockerlogsreceiver.NewFactory().Type(): "github.com/zharp-io/agent/dockerlogsreceiver v0.0.1",
-		dockerstatereceiver.NewFactory().Type(): "github.com/zharp-io/agent/dockerlogsreceiver v0.0.1",
-		diskusagereceiver.NewFactory().Type(): "github.com/zharp-io/agent/diskusagereceiver v0.0.1",
+		otlpreceiver.NewFactory().Type():          "go.opentelemetry.io/collector/receiver/otlpreceiver v0.154.0",
+		filelogreceiver.NewFactory().Type():       "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver v0.154.0",
+		hostmetricsreceiver.NewFactory().Type():   "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver v0.154.0",
+		dockerstatsreceiver.NewFactory().Type():   "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/dockerstatsreceiver v0.154.0",
+		postgresqlreceiver.NewFactory().Type():    "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver v0.154.0",
+		redisreceiver.NewFactory().Type():         "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/redisreceiver v0.154.0",
+		mongodbreceiver.NewFactory().Type():       "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mongodbreceiver v0.154.0",
+		mysqlreceiver.NewFactory().Type():         "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mysqlreceiver v0.154.0",
+		sqlqueryreceiver.NewFactory().Type():      "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlqueryreceiver v0.154.0",
+		journaldreceiver.NewFactory().Type():      "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/journaldreceiver v0.154.0",
+		dockerlogsreceiver.NewFactory().Type():    "github.com/zharp-io/agent/dockerlogsreceiver v0.0.1",
+		dockerstatereceiver.NewFactory().Type():   "github.com/zharp-io/agent/dockerlogsreceiver v0.0.1",
+		diskusagereceiver.NewFactory().Type():     "github.com/zharp-io/agent/diskusagereceiver v0.0.1",
+		netusagereceiver.NewFactory().Type():      "github.com/zharp-io/agent/netusagereceiver v0.0.1",
 		fluentforwardreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/fluentforwardreceiver v0.154.0",
-		statsdreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/statsdreceiver v0.154.0",
-		kubeletstatsreceiver.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver v0.154.0",
+		statsdreceiver.NewFactory().Type():        "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/statsdreceiver v0.154.0",
+		kubeletstatsreceiver.NewFactory().Type():  "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver v0.154.0",
 	})
 
 	factories.Exporters, err = otelcol.MakeFactoryMap[exporter.Factory](
@@ -123,7 +126,7 @@ func components() (otelcol.Factories, error) {
 		return otelcol.Factories{}, err
 	}
 	factories.ExporterModules = makeModulesMap(factories.Exporters, map[component.Type]string{
-		zharpexporter.NewFactory().Type(): "github.com/zharp-io/agent/zharpexporter v0.0.1",
+		zharpexporter.NewFactory().Type():    "github.com/zharp-io/agent/zharpexporter v0.0.1",
 		otlphttpexporter.NewFactory().Type(): "go.opentelemetry.io/collector/exporter/otlphttpexporter v0.154.0",
 	})
 
@@ -140,22 +143,20 @@ func components() (otelcol.Factories, error) {
 		return otelcol.Factories{}, err
 	}
 	factories.ProcessorModules = makeModulesMap(factories.Processors, map[component.Type]string{
-		batchprocessor.NewFactory().Type(): "go.opentelemetry.io/collector/processor/batchprocessor v0.154.0",
-		memorylimiterprocessor.NewFactory().Type(): "go.opentelemetry.io/collector/processor/memorylimiterprocessor v0.154.0",
+		batchprocessor.NewFactory().Type():             "go.opentelemetry.io/collector/processor/batchprocessor v0.154.0",
+		memorylimiterprocessor.NewFactory().Type():     "go.opentelemetry.io/collector/processor/memorylimiterprocessor v0.154.0",
 		resourcedetectionprocessor.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/processor/resourcedetectionprocessor v0.154.0",
-		k8sattributesprocessor.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/processor/k8sattributesprocessor v0.154.0",
-		zharplogsprocessor.NewFactory().Type(): "github.com/zharp-io/agent/zharplogsprocessor v0.0.1",
-		transformprocessor.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/processor/transformprocessor v0.154.0",
-		groupbyattrsprocessor.NewFactory().Type(): "github.com/open-telemetry/opentelemetry-collector-contrib/processor/groupbyattrsprocessor v0.154.0",
+		k8sattributesprocessor.NewFactory().Type():     "github.com/open-telemetry/opentelemetry-collector-contrib/processor/k8sattributesprocessor v0.154.0",
+		zharplogsprocessor.NewFactory().Type():         "github.com/zharp-io/agent/zharplogsprocessor v0.0.1",
+		transformprocessor.NewFactory().Type():         "github.com/open-telemetry/opentelemetry-collector-contrib/processor/transformprocessor v0.154.0",
+		groupbyattrsprocessor.NewFactory().Type():      "github.com/open-telemetry/opentelemetry-collector-contrib/processor/groupbyattrsprocessor v0.154.0",
 	})
 
-	factories.Connectors, err = otelcol.MakeFactoryMap[connector.Factory](
-	)
+	factories.Connectors, err = otelcol.MakeFactoryMap[connector.Factory]()
 	if err != nil {
 		return otelcol.Factories{}, err
 	}
-	factories.ConnectorModules = makeModulesMap(factories.Connectors, map[component.Type]string{
-	})
+	factories.ConnectorModules = makeModulesMap(factories.Connectors, map[component.Type]string{})
 
 	return factories, nil
 }

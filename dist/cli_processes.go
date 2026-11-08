@@ -109,3 +109,27 @@ func withDiskUsage(content string) (string, []string) {
 	content = addToPipeline(content, processPipelineID, []string{diskUsageReceiverID})
 	return content, []string{"Disk usage: each drive's biggest folders and the space each user owns, hourly"}
 }
+
+// Each program's network traffic and who it talks to, for Servers & Containers' Network breakdown
+// (zharp_network_usage, package netusagereceiver): the kernel's TCP connection table every 10s,
+// reported every minute. Linux, in the processes pipeline (OTLP only), naming programs through the
+// read-only helper.
+const (
+	networkUsageReceiverID    = "zharp_network_usage"
+	networkUsageReceiverBlock = "  " + networkUsageReceiverID + ":\n" +
+		"    collection_interval: 1m\n"
+)
+
+// collectsNetworkUsage reports whether this platform's agent measures traffic per program.
+func collectsNetworkUsage() bool { return runtime.GOOS == "linux" }
+
+// withNetworkUsage adds traffic per program to a config that collects processes, as `update` and
+// install do. It changes nothing in a config that already has it or doesn't collect processes.
+func withNetworkUsage(content string) (string, []string) {
+	if !collectsNetworkUsage() || strings.Contains(content, "\n  "+networkUsageReceiverID+":") || !hasPipeline(content, processPipelineID) {
+		return content, nil
+	}
+	content = strings.Replace(content, "\nprocessors:", "\n"+networkUsageReceiverBlock+"\nprocessors:", 1)
+	content = addToPipeline(content, processPipelineID, []string{networkUsageReceiverID})
+	return content, []string{"Network by program: each program's traffic and who it talks to, every minute"}
+}

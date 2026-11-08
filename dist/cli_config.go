@@ -405,6 +405,7 @@ func buildConfig(spec configSpec) string {
 
 	content := sb.String()
 	content, _ = withDiskUsage(content)
+	content, _ = withNetworkUsage(content)
 	return content
 }
 

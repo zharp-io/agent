@@ -13,11 +13,12 @@ import (
 const inspectHelperDir = "/usr/local/lib/zharp-collector"
 
 // ensureInspectHelper puts the read-only helper next to the collector: a copy of binary, owned by
-// root, runnable only by the zharp-collector group, with CAP_DAC_READ_SEARCH alone — enough to
-// list every folder and see file sizes, nothing else: it can't write, can't read what files say
-// beyond their names, and refuses to do anything but measure disk usage (runInspectHelper).
-// Without setcap (libcap2-bin) there's no helper, and the scan counts what the agent's user can
-// read. Returns a line for the install or update summary.
+// root, runnable only by the zharp-collector group, with two capabilities: CAP_DAC_READ_SEARCH, to
+// list every folder and see file sizes, and CAP_SYS_PTRACE, to see which process holds which
+// network connection. It can't write anything, and it refuses to do anything but measure disk usage
+// and list sockets' processes (runInspectHelper). Without setcap (libcap2-bin) there's no helper:
+// the disk scan counts what the agent's user can read, and network traffic is named by user.
+// Returns a line for the install or update summary.
 func ensureInspectHelper(binary string) string {
 	if os.Getuid() != 0 {
 		return ""
@@ -25,7 +26,7 @@ func ensureInspectHelper(binary string) string {
 	setcap, err := exec.LookPath("setcap")
 	if err != nil {
 		_ = os.Remove(filepath.Join(inspectHelperDir, inspectHelperName))
-		return "Disk usage: only folders the agent can read are measured (install libcap2-bin for setcap, then run update)"
+		return "Disk and network usage: only what the agent's own user can see is measured (install libcap2-bin for setcap, then run update)"
 	}
 	if err := os.MkdirAll(inspectHelperDir, 0o755); err != nil {
 		return "Disk usage: " + err.Error()
@@ -47,9 +48,9 @@ func ensureInspectHelper(binary string) string {
 		_ = os.Remove(tmp)
 		return "Disk usage: " + err.Error()
 	}
-	if out, err := exec.Command(setcap, "cap_dac_read_search+ep", tmp).CombinedOutput(); err != nil {
+	if out, err := exec.Command(setcap, "cap_dac_read_search,cap_sys_ptrace+ep", tmp).CombinedOutput(); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Sprintf("Disk usage: setcap failed (%s): only folders the agent can read are measured", string(out))
+		return fmt.Sprintf("Disk and network usage: setcap failed (%s): only what the agent's own user can see is measured", string(out))
 	}
 	if err := os.Rename(tmp, target); err != nil {
 		_ = os.Remove(tmp)

@@ -5,8 +5,16 @@ import (
 	"testing"
 )
 
-// withoutDiskUsage is a config without the folder scan, as before agent 1.9.5.
+// withoutNetworkUsage is a config without traffic per program, as before agent 1.9.6.
+func withoutNetworkUsage(content string) string {
+	content = strings.Replace(content, "\n"+networkUsageReceiverBlock, "", 1)
+	return strings.Replace(content, ", "+networkUsageReceiverID+"]", "]", 1)
+}
+
+// withoutDiskUsage is a config without the folder scan, as before agent 1.9.5 (and so without
+// traffic per program, which came after).
 func withoutDiskUsage(content string) string {
+	content = withoutNetworkUsage(content)
 	content = strings.Replace(content, "\n"+diskUsageReceiverBlock, "", 1)
 	return strings.Replace(content, ", "+diskUsageReceiverID+"]", "]", 1)
 }
@@ -91,14 +99,35 @@ func TestDiskUsageIsAddedOnceToTheProcessesPipeline(t *testing.T) {
 	if strings.Count(cfg, "\n  "+diskUsageReceiverID+":") != 1 {
 		t.Fatalf("install config should have the receiver once:\n%s", cfg)
 	}
-	if !strings.Contains(cfg, "receivers: ["+processReceiverID+", "+diskUsageReceiverID+"]") {
+	if !strings.Contains(cfg, "receivers: ["+processReceiverID+", "+diskUsageReceiverID) {
 		t.Fatalf("the receiver joins the processes pipeline:\n%s", cfg)
 	}
+	cfg = withoutNetworkUsage(cfg)
 	updated, notes := withDiskUsage(withoutDiskUsage(cfg))
 	if updated != cfg || len(notes) != 1 {
 		t.Fatalf("update should give the install config back:\n%s", updated)
 	}
 	if again, notes := withDiskUsage(updated); again != updated || notes != nil {
+		t.Fatal("a second update changes nothing")
+	}
+}
+
+func TestNetworkUsageIsAddedOnceToTheProcessesPipeline(t *testing.T) {
+	if !collectsNetworkUsage() {
+		t.Skip("traffic per program is measured on Linux")
+	}
+	cfg := buildConfig(configSpec{metricsReceivers: []string{"hostmetrics"}, tracing: true})
+	if strings.Count(cfg, "\n  "+networkUsageReceiverID+":") != 1 {
+		t.Fatalf("install config should have the receiver once:\n%s", cfg)
+	}
+	if !strings.Contains(cfg, "receivers: ["+processReceiverID+", "+diskUsageReceiverID+", "+networkUsageReceiverID+"]") {
+		t.Fatalf("the receiver joins the processes pipeline:\n%s", cfg)
+	}
+	updated, notes := withNetworkUsage(withoutNetworkUsage(cfg))
+	if updated != cfg || len(notes) != 1 {
+		t.Fatalf("update should give the install config back:\n%s", updated)
+	}
+	if again, notes := withNetworkUsage(updated); again != updated || notes != nil {
 		t.Fatal("a second update changes nothing")
 	}
 }
