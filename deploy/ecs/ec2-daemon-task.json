@@ -101,7 +101,13 @@
             "SYS_PTRACE"
           ]
         }
-      }
+      },
+      "environment": [
+        {
+          "name": "HOST_ETC",
+          "value": "/hostfs/etc"
+        }
+      ]
     }
   ],
   "volumes": [

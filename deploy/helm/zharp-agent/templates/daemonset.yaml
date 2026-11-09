@@ -82,6 +82,11 @@ spec:
             # host.name is the node, and the cluster name goes on everything sent.
             - name: OTEL_RESOURCE_ATTRIBUTES
               value: "host.name=$(K8S_NODE_NAME){{ with .Values.clusterName }},k8s.cluster.name={{ . }}{{ end }}"
+            {{- if and .Values.metrics.enabled .Values.metrics.host }}
+            # The node's operating system, not the agent image's: OS detection reads the node's /etc.
+            - name: HOST_ETC
+              value: /hostfs/etc
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

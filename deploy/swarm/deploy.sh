@@ -36,6 +36,7 @@ docker service create --quiet --name zharp_collector --mode global \
   --restart-condition on-failure --restart-delay 5s \
   --limit-cpu 0.5 --limit-memory 256M --reserve-cpu 0.1 --reserve-memory 64M \
   --env "ZHARP_API_KEY=$ZHARP_API_KEY" \
+  --env HOST_ETC=/hostfs/etc \
   ${ZHARP_ENDPOINT:+--env "ZHARP_ENDPOINT=$ZHARP_ENDPOINT"} \
   --config "source=$CONFIG,target=/etc/zharp-collector/config.yaml,mode=0444" \
   --mount type=bind,source=/var/lib/docker/containers,target=/var/lib/docker/containers,readonly \

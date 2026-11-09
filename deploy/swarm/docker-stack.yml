@@ -41,6 +41,8 @@ services:
           memory: 64M
     environment:
       ZHARP_API_KEY: ${ZHARP_API_KEY}
+      # The node's operating system, not the agent image's: OS detection reads the node's /etc.
+      HOST_ETC: /hostfs/etc
     configs:
       - source: zharp_collector_config
         target: /etc/zharp-collector/config.yaml

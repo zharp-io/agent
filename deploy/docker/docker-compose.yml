@@ -23,6 +23,8 @@ services:
     user: "0:0"
     environment:
       ZHARP_API_KEY: ${ZHARP_API_KEY}
+      # The host's operating system, not the agent image's: OS detection reads the host's /etc.
+      HOST_ETC: /hostfs/etc
     volumes:
       - ./collector-config.yaml:/etc/zharp-collector/config.yaml:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
