@@ -4,6 +4,7 @@
   "requiresCompatibilities": [
     "EC2"
   ],
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/zharp-agent-ecs-exec",
   "containerDefinitions": [
     {
       "name": "zharp-collector",
